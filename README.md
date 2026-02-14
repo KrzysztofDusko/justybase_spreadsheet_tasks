@@ -2,7 +2,7 @@
 
 A high-performance TypeScript library for reading and writing Excel files in XLSB and XLSX formats.
 
-[![npm version](https://badge.fury.io/js/spreadsheet-tasks.svg)](https://www.npmjs.com/package/spreadsheet-tasks)
+[![npm version](https://badge.fury.io/js/@justybase%2Fspreadsheet-tasks.svg)](https://www.npmjs.com/package/@justybase/spreadsheet-tasks)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 🚀 Features
@@ -27,7 +27,7 @@ A high-performance TypeScript library for reading and writing Excel files in XLS
 ## 📦 Installation
 
 ```bash
-npm install spreadsheet-tasks
+npm install @justybase/spreadsheet-tasks
 ```
 
 ## 🔧 Quick Start
@@ -35,7 +35,7 @@ npm install spreadsheet-tasks
 ### Writing Excel Files
 
 ```typescript
-import { XlsbWriter, XlsxWriter } from 'spreadsheet-tasks';
+import { XlsbWriter, XlsxWriter } from '@justybase/spreadsheet-tasks';
 
 // Create XLSB file (recommended for performance)
 const xlsbWriter = new XlsbWriter('output.xlsb');
@@ -65,7 +65,7 @@ await xlsxWriter.finalize();
 For large datasets that don't fit in memory, use the streaming API to write rows one at a time:
 
 ```typescript
-import { XlsbWriter } from 'spreadsheet-tasks';
+import { XlsbWriter } from '@justybase/spreadsheet-tasks';
 
 const writer = new XlsbWriter('large-output.xlsb');
 
@@ -104,7 +104,7 @@ await writer.finalize();
 
 
 ```typescript
-import { XlsbReader, XlsxReader, ReaderFactory } from 'spreadsheet-tasks';
+import { XlsbReader, XlsxReader, ReaderFactory } from '@justybase/spreadsheet-tasks';
 
 // Using ReaderFactory (auto-detects format)
 const reader = ReaderFactory.create('data.xlsb');
