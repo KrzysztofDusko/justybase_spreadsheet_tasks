@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+output/
+
+# Generated Excel files
+*.xlsb
+*.xlsx
+
+# IDE and editor files
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Debug and log files
+*.log
+npm-debug.log*
+
+# Benchmark results
+benchmark_result*.txt
+benchmark_results_*.txt
+
+# Test output
+tests/output/
+test-output/

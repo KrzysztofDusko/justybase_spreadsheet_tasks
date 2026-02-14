@@ -1,0 +1,67 @@
+{
+  "name": "@justybase/spreadsheet-tasks",
+  "version": "1.0.0",
+  "description": "High-performance TypeScript library for reading and writing Excel files in XLSB and XLSX formats. XLSB is 3.3x faster to write and 2.1x faster to read than XLSX.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && npm run test:smoke && npm run test:unit && npm run test:integration",
+    "test:smoke": "npm run build && npx ts-node tests/smoke.test.ts",
+    "test:unit": "npx ts-node tests/unit/bigbuffer.test.ts && npx ts-node tests/unit/biff-reader-writer.test.ts && npx ts-node tests/unit/xlsb-writer.test.ts",
+    "test:integration": "npm run build && npx ts-node tests/integration/xlsb-writer.test.ts && npx ts-node tests/integration/xlsx-writer.test.ts",
+    "test:xlsb": "npm run build && npx ts-node tests/integration/xlsb-writer.test.ts",
+    "test:xlsx": "npm run build && npx ts-node tests/integration/xlsx-writer.test.ts",
+    "benchmark": "npm run build && npx ts-node benchmarks/performance.bench.ts",
+    "benchmark:comparison": "npm run build && npx ts-node benchmarks/comparison.bench.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "excel",
+    "xlsb",
+    "xlsx",
+    "spreadsheet",
+    "binary",
+    "workbook",
+    "reader",
+    "writer",
+    "typescript",
+    "performance"
+  ],
+  "author": "Krzysztof Dusko",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KrzysztofDusko/XlsbWriterNode.git"
+  },
+  "homepage": "https://github.com/KrzysztofDusko/XlsbWriterNode#readme",
+  "bugs": {
+    "url": "https://github.com/KrzysztofDusko/XlsbWriterNode/issues"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "archiver": "^7.0.1",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.6",
+    "@types/archiver": "^7.0.0",
+    "@types/node": "^22.10.5",
+    "@types/yauzl": "^2.10.3",
+    "exceljs": "^4.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}
