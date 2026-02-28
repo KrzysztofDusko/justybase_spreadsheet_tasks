@@ -44,6 +44,15 @@ export class XlsxWriter {
 
     private _oaEpoch: number;
 
+    // Streaming state
+    private currentSheetBuffer: BigBuffer | null = null;
+    private currentSheetRowNum: number = 0;
+    private currentSheetStartCol: number = 0;
+    private currentSheetEndCol: number = 0;
+    private currentSheetDoAutofilter: boolean = false;
+    private isStreaming: boolean = false;
+    private currentColLetters: string[] = [];
+
     constructor(filePath: string) {
         this.output = fs.createWriteStream(filePath);
         this.archive = archiver('zip');
@@ -131,6 +140,162 @@ export class XlsxWriter {
             .replace(/'/g, '&apos;')
             // eslint-disable-next-line no-control-regex
             .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+    }
+
+    startSheet(
+        sheetName: string,
+        columnCount: number,
+        headers?: string[],
+        options: { hidden?: boolean; doAutofilter?: boolean } = {}
+    ): void {
+        if (this.isStreaming) {
+            throw new Error('Already in streaming mode. Call endSheet() first.');
+        }
+
+        const { hidden = false, doAutofilter = true } = options;
+
+        this.addSheet(sheetName, hidden);
+
+        this.isStreaming = true;
+        this.currentSheetBuffer = new BigBuffer();
+        this.currentSheetRowNum = 0;
+        this.currentSheetStartCol = 0;
+        this.currentSheetEndCol = columnCount;
+        this.currentSheetDoAutofilter = doAutofilter && headers !== undefined;
+
+        const bigBuf = this.currentSheetBuffer;
+
+        this.colWidths = new Array(columnCount).fill(-1.0);
+
+        const colLetters = new Array(columnCount);
+        for (let i = 0; i < columnCount; i++) {
+            colLetters[i] = this._getColumnLetter(i);
+        }
+        this.currentColLetters = colLetters;
+
+        if (headers) {
+            for (let i = 0; i < columnCount; i++) {
+                const len = headers[i] ? headers[i].length : 0;
+                let width = 1.25 * len + 2;
+                if (width > 80) width = 80;
+                if (this.colWidths[i] < width) this.colWidths[i] = width;
+            }
+        }
+
+        bigBuf.writeString('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
+        bigBuf.writeString('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
+
+        // Dimension - just A1 since we don't know row count in advance
+        bigBuf.writeString('<dimension ref="A1"/>');
+
+        const isFirstSheet = this.sheetCount === 1;
+        if (this.currentSheetDoAutofilter) {
+            if (isFirstSheet) {
+                bigBuf.writeString('<sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen" /><selection pane="bottomLeft" /></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>');
+            } else {
+                bigBuf.writeString('<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen" /><selection pane="bottomLeft" /></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>');
+            }
+        } else {
+            if (isFirstSheet) {
+                bigBuf.writeString('<sheetViews><sheetView tabSelected="1" workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>');
+            } else {
+                bigBuf.writeString('<sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>');
+            }
+        }
+
+        bigBuf.writeString('<cols>');
+        for (let i = 0; i < columnCount; i++) {
+            const width = this.colWidths[i] > 0 ? this.colWidths[i] : 10;
+            bigBuf.writeString(`<col min="${i + 1}" max="${i + 1}" width="${width}" bestFit="1" customWidth="1" />`);
+        }
+        bigBuf.writeString('</cols><sheetData>');
+
+        if (headers) {
+            this.currentSheetRowNum++;
+            bigBuf.writeString(`<row r="${this.currentSheetRowNum}">`);
+            for (let c = 0; c < headers.length; c++) {
+                this._writeStringCell(bigBuf, headers[c], colLetters[c], this.currentSheetRowNum);
+            }
+            bigBuf.writeString('</row>');
+        }
+    }
+
+    writeRow(row: any[]): void {
+        if (!this.isStreaming || !this.currentSheetBuffer) {
+            throw new Error('Not in streaming mode. Call startSheet() first.');
+        }
+
+        if (row.length !== this.currentSheetEndCol - this.currentSheetStartCol) {
+            throw new Error(
+                `Row length mismatch. Expected ${this.currentSheetEndCol - this.currentSheetStartCol} columns, got ${row.length}`
+            );
+        }
+
+        const bigBuf = this.currentSheetBuffer;
+        this.currentSheetRowNum++;
+        bigBuf.writeString(`<row r="${this.currentSheetRowNum}">`);
+
+        for (let c = 0; c < row.length; c++) {
+            const val = row[c];
+            if (val === null || val === undefined) continue;
+
+            const colRef = this.currentColLetters[c];
+            if (typeof val === 'number') {
+                if (Number.isFinite(val)) {
+                    bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}"><v>${val}</v></c>`);
+                } else {
+                    this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+                }
+            } else if (typeof val === 'bigint') {
+                this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+            } else if (typeof val === 'boolean') {
+                bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}" t="b"><v>${val ? 1 : 0}</v></c>`);
+            } else if (val instanceof Date) {
+                const oaDate = this._toOADate(val);
+                if (Number.isFinite(oaDate)) {
+                    bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}" s="1"><v>${oaDate}</v></c>`);
+                } else {
+                    this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+                }
+            } else {
+                this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+            }
+        }
+        bigBuf.writeString('</row>');
+    }
+
+    endSheet(): void {
+        if (!this.isStreaming || !this.currentSheetBuffer) {
+            throw new Error('Not in streaming mode. Call startSheet() first.');
+        }
+
+        const bigBuf = this.currentSheetBuffer;
+        bigBuf.writeString('</sheetData>');
+
+        if (this.currentSheetDoAutofilter && this.currentSheetEndCol > 0) {
+            this._autofilterIsOn = true;
+            const filterRef = `A1:${this.currentColLetters[this.currentSheetEndCol - 1]}${this.currentSheetRowNum}`;
+            bigBuf.writeString(`<autoFilter ref="${filterRef}"/>`);
+
+            const sheet = this.sheetList[this.sheetCount - 1];
+            const formulaSheetName = this._formatSheetNameForFormula(sheet.name);
+            sheet.filterHeaderRange = `${formulaSheetName}!$A$1:$${this.currentColLetters[this.currentSheetEndCol - 1]}$${this.currentSheetRowNum}`;
+        }
+
+        bigBuf.writeString('</worksheet>');
+
+        this.archive.append(Readable.from(bigBuf.getChunks()), {
+            name: this.sheetList[this.sheetCount - 1].pathInArchive
+        });
+
+        // Reset streaming state
+        this.isStreaming = false;
+        this.currentSheetBuffer = null;
+        this.currentSheetRowNum = 0;
+        this.currentSheetStartCol = 0;
+        this.currentSheetEndCol = 0;
+        this.currentSheetDoAutofilter = false;
+        this.currentColLetters = [];
     }
 
     writeSheet(rows: any[][], headers: string[] | null = null, doAutofilter: boolean = true): void {
