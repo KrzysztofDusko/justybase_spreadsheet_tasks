@@ -6,6 +6,7 @@ import { XlsxWriter } from '../../dist/XlsxWriter';
 import { XlsxReader } from '../../dist/XlsxReader';
 import * as fs from 'fs';
 import * as path from 'path';
+import AdmZip from 'adm-zip';
 
 const outputDir = path.join(__dirname, '..', '..', 'test-output', 'integration', 'xlsx-writer');
 
@@ -49,6 +50,16 @@ function assertApprox(actual: number, expected: number, tolerance: number, testN
         results.push({ name: testName, passed: false, message: msg });
         console.log(`❌ ${testName}: ${msg}`);
     }
+}
+
+function getZipEntryText(filePath: string, entryName: string): string | null {
+    const zip = new AdmZip(filePath);
+    const entry = zip.getEntry(entryName);
+    if (!entry) {
+        return null;
+    }
+
+    return entry.getData().toString('utf8');
 }
 
 // ==================== DATA TYPE TESTS ====================
@@ -285,6 +296,28 @@ async function testMultipleSheets(): Promise<void> {
     await writer.finalize();
 
     assert(fs.existsSync(filePath), 'Multi-sheet file created');
+
+    const workbookXml = getZipEntryText(filePath, 'xl/workbook.xml');
+    assert(workbookXml !== null, 'Multi-sheet workbook.xml exists');
+    if (workbookXml) {
+        assert(/<bookViews>\s*<workbookView\b[^>]*\/>\s*<\/bookViews>/.test(workbookXml), 'Multi-sheet workbook has bookViews');
+        assert(/<fileVersion\b[^>]*\/>/.test(workbookXml), 'Multi-sheet workbook has fileVersion metadata');
+        assert(/<workbookPr\b[^>]*\/>/.test(workbookXml), 'Multi-sheet workbook has workbook properties');
+        assert(/<calcPr\b[^>]*\/>/.test(workbookXml), 'Multi-sheet workbook has calc properties');
+        assert(workbookXml.indexOf('<bookViews>') < workbookXml.indexOf('<sheets>'), 'Multi-sheet workbook bookViews precede sheets');
+    }
+
+    const sheet1Xml = getZipEntryText(filePath, 'xl/worksheets/sheet1.xml');
+    assert(sheet1Xml !== null, 'Multi-sheet sheet1.xml exists');
+    if (sheet1Xml) {
+        assert(/<sheetView\b[^>]*tabSelected="1"[^>]*workbookViewId="0"/.test(sheet1Xml), 'Multi-sheet first sheet references workbookViewId 0');
+    }
+
+    const sheet2Xml = getZipEntryText(filePath, 'xl/worksheets/sheet2.xml');
+    assert(sheet2Xml !== null, 'Multi-sheet sheet2.xml exists');
+    if (sheet2Xml) {
+        assert(/<sheetView\b[^>]*workbookViewId="0"/.test(sheet2Xml), 'Multi-sheet second sheet references workbookViewId 0');
+    }
 
     const reader = new XlsxReader();
     await reader.open(filePath);

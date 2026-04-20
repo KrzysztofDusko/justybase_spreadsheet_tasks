@@ -528,6 +528,9 @@ export class XlsxWriter {
     private _writeWorkbook(): void {
         let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<fileVersion appName="xl" lastEdited="4" lowestEdited="4" rupBuild="4505"/>
+<workbookPr defaultThemeVersion="124226"/>
+<bookViews><workbookView xWindow="240" yWindow="15" windowWidth="16095" windowHeight="9660"/></bookViews>
 <sheets>`;
 
         for (const sheet of this.sheetList) {
@@ -550,6 +553,7 @@ export class XlsxWriter {
             xml += '</definedNames>';
         }
 
+        xml += '<calcPr calcId="124519" fullCalcOnLoad="1"/>';
         xml += `</workbook>`;
         this.archive.append(xml, { name: 'xl/workbook.xml' });
     }
