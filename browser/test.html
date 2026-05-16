@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Browser Spreadsheet Tests</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; }
+        .pass { color: green; font-weight: bold; }
+        .fail { color: red; font-weight: bold; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        .log-entry { margin: 5px 0; padding: 5px; border-bottom: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Browser Spreadsheet Tests</h1>
+    <p>Running edge case tests (nulls, undefined, empty strings, dates, large numbers, booleans)...</p>
+    
+    <div id="results"></div>
+    <button id="btnDownload" style="display:none; padding: 10px; margin-top: 10px; cursor: pointer;">Download Generated Test Files</button>
+
+    <script type="module">
+        import { BrowserXlsxWriter, BrowserXlsbWriter } from './browser-spreadsheet.js';
+
+        const resultsDiv = document.getElementById('results');
+        const btnDownload = document.getElementById('btnDownload');
+        let generatedBlobs = {};
+
+        function log(message, isError = false, isSuccess = false) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            if (isError) div.innerHTML = `<span class="fail">❌ FAIL:</span> ${message}`;
+            else if (isSuccess) div.innerHTML = `<span class="pass">✅ PASS:</span> ${message}`;
+            else div.innerText = `ℹ️ ${message}`;
+            resultsDiv.appendChild(div);
+        }
+
+        async function runTests() {
+            try {
+                // Test Data with Edge Cases
+                const headers = ['ID', 'NullVal', 'UndefinedVal', 'EmptyStr', 'Number', 'LargeNum', 'Negative', 'Float', 'BoolTrue', 'BoolFalse', 'Date', 'SpecialChars'];
+                
+                const rows = [
+                    [1, null, undefined, "", 0, 9007199254740991, -12345, 3.14159, true, false, new Date('2024-01-01T12:00:00Z'), "Zażółć gęślą jaźń"],
+                    [2, null, undefined, "   ", 42, -9007199254740991, -0.0001, 0.0000001, true, false, new Date('1900-01-01T00:00:00Z'), "<>&'\""],
+                    [3, "Not null", "Not undef", "Text", 123456789, 123456789012345, -999, 123.456, true, false, new Date(), "こんにちは"],
+                    [4, null, null, null, null, null, null, null, null, null, null, null], // All nulls
+                    [5, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined], // All undefined
+                    [], // Empty row
+                ];
+
+                log("Starting tests with edge cases...");
+
+                // Test XLSX
+                log("Testing BrowserXlsxWriter...");
+                const xlsxWriter = new BrowserXlsxWriter();
+                xlsxWriter.addSheet('EdgeCases');
+                xlsxWriter.writeSheet(rows, headers, true);
+                const xlsxBlob = xlsxWriter.finalize();
+                
+                if (xlsxBlob && xlsxBlob.size > 0) {
+                    log(`BrowserXlsxWriter generated blob successfully (${xlsxBlob.size} bytes).`, false, true);
+                    generatedBlobs['test_edge_cases.xlsx'] = xlsxBlob;
+                } else {
+                    log("BrowserXlsxWriter returned empty or invalid blob.", true);
+                }
+
+                // Test XLSB
+                log("Testing BrowserXlsbWriter...");
+                const xlsbWriter = new BrowserXlsbWriter();
+                xlsbWriter.addSheet('EdgeCases');
+                xlsbWriter.writeSheet(rows, headers, true);
+                const xlsbBlob = xlsbWriter.finalize();
+
+                if (xlsbBlob && xlsbBlob.size > 0) {
+                    log(`BrowserXlsbWriter generated blob successfully (${xlsbBlob.size} bytes).`, false, true);
+                    generatedBlobs['test_edge_cases.xlsb'] = xlsbBlob;
+                } else {
+                    log("BrowserXlsbWriter returned empty or invalid blob.", true);
+                }
+
+                // Streaming Test
+                log("Testing Streaming API (XLSX)...");
+                const streamXlsx = new BrowserXlsxWriter();
+                streamXlsx.startSheet('StreamSheet', headers.length, headers);
+                for (const row of rows) {
+                    // Normalize empty array for streaming API which expects exactly headers.length columns
+                    const normalizedRow = row.length === 0 ? new Array(headers.length).fill(null) : row;
+                    streamXlsx.writeRow(normalizedRow);
+                }
+                streamXlsx.endSheet();
+                const streamBlob = streamXlsx.finalize();
+                
+                if (streamBlob && streamBlob.size > 0) {
+                    log(`Streaming API generated blob successfully (${streamBlob.size} bytes).`, false, true);
+                } else {
+                    log("Streaming API returned empty or invalid blob.", true);
+                }
+
+                log("All tests completed without throwing errors!", false, true);
+                btnDownload.style.display = 'block';
+
+            } catch (err) {
+                log(`Test threw an exception: ${err.message}\n${err.stack}`, true);
+            }
+        }
+
+        btnDownload.onclick = () => {
+            for (const [filename, blob] of Object.entries(generatedBlobs)) {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 5000);
+            }
+        };
+
+        // Run automatically
+        runTests();
+    </script>
+</body>
+</html>
