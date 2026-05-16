@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Spreadsheet Benchmark: JustyBase vs SheetJS</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 20px auto; padding: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #f8f9fa; }
+        button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 6px; border: none; color: #fff; background: #2563eb; }
+        button:hover { background: #1d4ed8; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .winner { font-weight: bold; color: #16a34a; }
+        #status { margin-top: 20px; font-weight: bold; color: #475569; }
+    </style>
+    <!-- Load SheetJS for comparison -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+    <h1>🚀 Spreadsheet Benchmark in Browser</h1>
+    <p>Comparing performance: <strong>JustyBase Spreadsheet Tasks (Browser)</strong> vs <strong>SheetJS</strong></p>
+    
+    <div>
+        <label>Rows: <select id="rowCount">
+            <option value="10000">10,000</option>
+            <option value="50000" selected>50,000</option>
+            <option value="100000">100,000</option>
+        </select></label>
+        <button id="btnRun">Run Benchmark</button>
+    </div>
+
+    <div id="status">Ready.</div>
+
+    <table id="resultsTable" style="display:none;">
+        <thead>
+            <tr>
+                <th>Library / Format</th>
+                <th>Write Time (ms)</th>
+                <th>File Size (MB)</th>
+                <th>Speedup vs SheetJS</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="resultsBody"></tbody>
+    </table>
+
+    <script type="module">
+        import { BrowserXlsxWriter, BrowserXlsbWriter } from './browser-spreadsheet.js';
+
+        const btnRun = document.getElementById('btnRun');
+        const statusDiv = document.getElementById('status');
+        const resultsTable = document.getElementById('resultsTable');
+        const resultsBody = document.getElementById('resultsBody');
+
+        function generateData(rowCount) {
+            const headers = ['ID', 'Name', 'Score', 'Date', 'IsActive', 'Category', 'Price', 'Quantity', 'Total', 'Notes'];
+            const rows = [];
+            const now = new Date();
+            
+            for (let i = 0; i < rowCount; i++) {
+                rows.push([
+                    i + 1,
+                    `User ${i}`,
+                    Math.random() * 100,
+                    new Date(now.getTime() - Math.random() * 10000000000),
+                    i % 2 === 0,
+                    `Cat_${i % 10}`,
+                    Math.random() * 1000,
+                    Math.floor(Math.random() * 100),
+                    Math.random() * 100000,
+                    `Note for row ${i} with some extra text to simulate realistic string data.`
+                ]);
+            }
+            return { headers, rows };
+        }
+
+        async function runBenchmark() {
+            const rowCount = parseInt(document.getElementById('rowCount').value, 10);
+            
+            btnRun.disabled = true;
+            resultsTable.style.display = 'none';
+            resultsBody.innerHTML = '';
+            
+            statusDiv.innerText = `Generating ${rowCount.toLocaleString()} rows of test data...`;
+            await new Promise(r => setTimeout(r, 50)); // yield to UI
+            
+            const { headers, rows } = generateData(rowCount);
+            const results = [];
+
+            // 1. Benchmark SheetJS (XLSX)
+            statusDiv.innerText = `Running SheetJS (XLSX)...`;
+            await new Promise(r => setTimeout(r, 50));
+            
+            try {
+                const sheetJsStart = performance.now();
+                // SheetJS expects array of arrays including header
+                const sheetJsData = [headers, ...rows];
+                const ws = XLSX.utils.aoa_to_sheet(sheetJsData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+                const sheetJsArrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const sheetJsBlob = new Blob([sheetJsArrayBuffer], { type: 'application/octet-stream' });
+                const sheetJsTime = performance.now() - sheetJsStart;
+                
+                results.push({
+                    name: 'SheetJS (XLSX)',
+                    time: sheetJsTime,
+                    size: sheetJsBlob.size,
+                    isBaseline: true,
+                    blob: sheetJsBlob,
+                    ext: '.xlsx'
+                });
+            } catch (e) {
+                console.error('SheetJS failed:', e);
+                results.push({ name: 'SheetJS (XLSX)', time: -1, size: 0, error: e.message });
+            }
+
+            // 2. Benchmark JustyBase (XLSX)
+            statusDiv.innerText = `Running JustyBase BrowserXlsxWriter...`;
+            await new Promise(r => setTimeout(r, 50));
+            
+            try {
+                const jbXlsxStart = performance.now();
+                const jbXlsxWriter = new BrowserXlsxWriter();
+                jbXlsxWriter.addSheet('Sheet1');
+                jbXlsxWriter.writeSheet(rows, headers, true);
+                const jbXlsxBlob = jbXlsxWriter.finalize();
+                const jbXlsxTime = performance.now() - jbXlsxStart;
+                
+                results.push({
+                    name: 'JustyBase (XLSX)',
+                    time: jbXlsxTime,
+                    size: jbXlsxBlob.size,
+                    blob: jbXlsxBlob,
+                    ext: '.xlsx'
+                });
+            } catch (e) {
+                console.error('JustyBase XLSX failed:', e);
+                results.push({ name: 'JustyBase (XLSX)', time: -1, size: 0, error: e.message });
+            }
+
+            // 3. Benchmark JustyBase (XLSB)
+            statusDiv.innerText = `Running JustyBase BrowserXlsbWriter...`;
+            await new Promise(r => setTimeout(r, 50));
+            
+            try {
+                const jbXlsbStart = performance.now();
+                const jbXlsbWriter = new BrowserXlsbWriter();
+                jbXlsbWriter.addSheet('Sheet1');
+                jbXlsbWriter.writeSheet(rows, headers, true);
+                const jbXlsbBlob = jbXlsbWriter.finalize();
+                const jbXlsbTime = performance.now() - jbXlsbStart;
+                
+                results.push({
+                    name: 'JustyBase (XLSB)',
+                    time: jbXlsbTime,
+                    size: jbXlsbBlob.size,
+                    blob: jbXlsbBlob,
+                    ext: '.xlsb'
+                });
+            } catch (e) {
+                console.error('JustyBase XLSB failed:', e);
+                results.push({ name: 'JustyBase (XLSB)', time: -1, size: 0, error: e.message });
+            }
+
+            // Display Results
+            statusDiv.innerText = 'Benchmark complete!';
+            
+            const baselineTime = results.find(r => r.isBaseline)?.time || 1;
+
+            results.forEach((res, idx) => {
+                const tr = document.createElement('tr');
+                
+                let speedup = '-';
+                if (!res.isBaseline && res.time > 0) {
+                    const ratio = baselineTime / res.time;
+                    speedup = `${ratio.toFixed(2)}x faster`;
+                    if (ratio > 1) speedup = `<span class="winner">${speedup}</span>`;
+                } else if (res.isBaseline) {
+                    speedup = 'Baseline';
+                }
+
+                if (res.error) {
+                    tr.innerHTML = `
+                        <td>${res.name}</td>
+                        <td colspan="4" style="color:red">Failed: ${res.error}</td>
+                    `;
+                } else {
+                    tr.innerHTML = `
+                        <td>${res.name}</td>
+                        <td>${res.time.toFixed(1)}</td>
+                        <td>${(res.size / 1024 / 1024).toFixed(2)}</td>
+                        <td>${speedup}</td>
+                        <td><button class="dl-btn" data-idx="${idx}" style="padding: 6px 12px; font-size: 13px;">Download</button></td>
+                    `;
+                }
+                resultsBody.appendChild(tr);
+            });
+
+            document.querySelectorAll('.dl-btn').forEach(btn => {
+                btn.onclick = (e) => {
+                    const res = results[e.target.dataset.idx];
+                    const url = URL.createObjectURL(res.blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `benchmark_${res.name.replace(/[^a-zA-Z0-9]/g, '_')}${res.ext}`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 5000);
+                };
+            });
+
+            resultsTable.style.display = 'table';
+            btnRun.disabled = false;
+        }
+
+        btnRun.addEventListener('click', runBenchmark);
+    </script>
+</body>
+</html>

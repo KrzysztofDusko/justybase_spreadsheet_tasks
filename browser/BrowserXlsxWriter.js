@@ -45,10 +45,10 @@ export class BrowserXlsxWriter {
         if(idx===undefined){idx=this._sstA.length;this._sstA.push(val);this._sstM.set(val,idx);}
         this._sstCnt++; bb.writeString(`<c r="${cr}${rn}" t="s"><v>${idx}</v></c>`);
     }
-    _wscBold(bb,val,cr,rn) {
+    _wscStyle(bb,val,cr,rn,styleId) {
         let idx = this._sstM.get(val);
         if(idx===undefined){idx=this._sstA.length;this._sstA.push(val);this._sstM.set(val,idx);}
-        this._sstCnt++; bb.writeString(`<c r="${cr}${rn}" t="s" s="3"><v>${idx}</v></c>`);
+        this._sstCnt++; bb.writeString(`<c r="${cr}${rn}" t="s" s="${styleId}"><v>${idx}</v></c>`);
     }
     _oa(d) { return (d.getTime()-this._oaE)/86400000; }
     _wcv(bb,v,cr,rn) {
@@ -72,15 +72,16 @@ export class BrowserXlsxWriter {
 
     startSheet(name,colCount,headers,options={}) {
         if(this._isS) throw new Error('Already streaming');
-        const{hidden=false,doAutofilter=true}=options;
+        const{hidden=false,doAutofilter=true,headerStyle='bold'}=options;
+        let hs=3; if(headerStyle==='fill') hs=4; else if(headerStyle==='bold+fill') hs=5;
         this.addSheet(name,hidden); this._isS=true;
         this._csb=new BrowserBigBuffer(); this._csrn=0; this._csSC=0; this._csEC=colCount;
         this._csAF=doAutofilter&&headers!==undefined;
         this._cw=new Array(colCount).fill(-1);
         const cl=new Array(colCount); for(let i=0;i<colCount;i++) cl[i]=this._cl(i); this._csCL=cl;
-        if(headers) for(let i=0;i<colCount;i++){let w=1.25*(headers[i]?headers[i].length:0)+2;if(w>80)w=80;if(this._cw[i]<w)this._cw[i]=w;}
+        if(headers) for(let i=0;i<colCount;i++){let w=1.3*(headers[i]?headers[i].length:0)+3;if(w>80)w=80;if(this._cw[i]<w)this._cw[i]=w;}
         this._sheetHead(this._csb,colCount,this._sc===1,this._csAF);
-        if(headers){this._csrn++;this._csb.writeString(`<row r="${this._csrn}">`);for(let c=0;c<headers.length;c++)this._wscBold(this._csb,headers[c],cl[c],this._csrn);this._csb.writeString('</row>');}
+        if(headers){this._csrn++;this._csb.writeString(`<row r="${this._csrn}">`);for(let c=0;c<headers.length;c++)this._wscStyle(this._csb,headers[c],cl[c],this._csrn,hs);this._csb.writeString('</row>');}
     }
     writeRow(row) {
         if(!this._isS) throw new Error('Not streaming');
@@ -97,17 +98,20 @@ export class BrowserXlsxWriter {
         this._isS=false; this._csb=null;
     }
 
-    writeSheet(rows,headers=null,doAutofilter=true) {
+    writeSheet(rows,headers=null,options={}) {
+        const doAutofilter = options.doAutofilter !== false;
+        const headerStyle = options.headerStyle || 'bold';
+        let hs=3; if(headerStyle==='fill') hs=4; else if(headerStyle==='bold+fill') hs=5;
         const bb=new BrowserBigBuffer();
         let cc=rows.length>0?rows[0].length:(headers?headers.length:0);
         this._cw=new Array(cc).fill(-1);
         const cl=new Array(cc); for(let i=0;i<cc;i++) cl[i]=this._cl(i);
-        if(headers) for(let i=0;i<cc;i++){let w=1.25*(headers[i]?headers[i].length:0)+2;if(w>80)w=80;if(this._cw[i]<w)this._cw[i]=w;}
-        for(let r=0;r<Math.min(rows.length,100);r++) for(let c=0;c<rows[r].length;c++){const v=rows[r][c];if(v==null)continue;let w=1.25*(v instanceof Date?10:v.toString().length)+2;if(w>80)w=80;if(this._cw[c]<w)this._cw[c]=w;}
+        if(headers) for(let i=0;i<cc;i++){let w=1.3*(headers[i]?headers[i].length:0)+3;if(w>80)w=80;if(this._cw[i]<w)this._cw[i]=w;}
+        for(let r=0;r<Math.min(rows.length,100);r++) for(let c=0;c<rows[r].length;c++){const v=rows[r][c];if(v==null)continue;let w=1.3*(v instanceof Date?10:v.toString().length)+3;if(w>80)w=80;if(this._cw[c]<w)this._cw[c]=w;}
         const tr=rows.length+(headers?1:0);
         this._sheetHead(bb,cc,this._sc===1,doAutofilter&&!!headers);
         let rn=0;
-        if(headers){rn++;bb.writeString(`<row r="${rn}">`);for(let c=0;c<headers.length;c++)this._wscBold(bb,headers[c],cl[c],rn);bb.writeString('</row>');}
+        if(headers){rn++;bb.writeString(`<row r="${rn}">`);for(let c=0;c<headers.length;c++)this._wscStyle(bb,headers[c],cl[c],rn,hs);bb.writeString('</row>');}
         for(let r=0;r<rows.length;r++){rn++;bb.writeString(`<row r="${rn}">`);for(let c=0;c<rows[r].length;c++)this._wcv(bb,rows[r][c],cl[c],rn);bb.writeString('</row>');}
         bb.writeString('</sheetData>');
         if(doAutofilter&&headers&&cc>0){this._afOn=true;const fr=`A1:${cl[cc-1]}${tr}`;bb.writeString(`<autoFilter ref="${fr}"/>`);const sh=this._sl[this._sc-1];sh.fhr=`${this._fmn(sh.name)}!$A$1:$${cl[cc-1]}$${tr}`;}
@@ -127,7 +131,7 @@ export class BrowserXlsxWriter {
         bb.writeString('</sst>'); this._zip.addFile('xl/sharedStrings.xml',bb.toUint8Array());
     }
     _writeStyles() {
-        // 2 fonts: normal (id=0) and bold (id=1). Style s="3" = bold font
+        // 2 fonts: normal (id=0) and bold (id=1).
         this._zip.addFile('xl/styles.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm:ss"/></numFmts>
@@ -138,11 +142,13 @@ export class BrowserXlsxWriter {
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="4">
+<cellXfs count="6">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<xf numFmtId="0" fontId="0" fillId="1" borderId="0" xfId="0" applyFill="1"/>
+<xf numFmtId="0" fontId="1" fillId="1" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 <dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>

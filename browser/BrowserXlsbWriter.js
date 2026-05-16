@@ -138,13 +138,14 @@ export class BrowserXlsbWriter {
             0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE6, 0x04, 0x00, 0xF2,
             0x04, 0x04, 0x01, 0x00, 0x00, 0x00, 0x2F, 0x10, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00,
             0x00, 0xF3, 0x04, 0x00, 0xE9, 0x04, 0x04,
-            0x05, // 5 xfs
+            0x06, // 6 xfs
             0x00, 0x00, 0x00,
             0x2F, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00,
             0x2F, 0x10, 0x00, 0x00, 0xA4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00,
             0x2F, 0x10, 0x00, 0x00, 0xA6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00,
-            0x2F, 0x10, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00,
-            0x2F, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00, // index=4 for bold
+            0x2F, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00, // index=3: bold
+            0x2F, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00, // index=4: fill
+            0x2F, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00, // index=5: bold+fill
             0xEA, 0x04, 0x00, 0xEB, 0x04, 0x04, 0x01, 0x00,
             0x00, 0x00, 0x25, 0x06, 0x01, 0x00, 0x02, 0x11, 0x00, 0x80, 0x80, 0x18, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x00, 0x30, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x4E,
@@ -212,7 +213,8 @@ export class BrowserXlsbWriter {
 
     startSheet(sheetName, columnCount, headers, options = {}) {
         if (this._isStreaming) throw new Error('Already streaming');
-        const { hidden = false, doAutofilter = true } = options;
+        const { hidden = false, doAutofilter = true, headerStyle = 'bold' } = options;
+        let hs = 3; if (headerStyle === 'fill') hs = 4; else if (headerStyle === 'bold+fill') hs = 5;
         this.addSheet(sheetName, hidden);
         this._isStreaming = true;
         this._currentSheetBuffer = new BrowserBigBuffer();
@@ -224,7 +226,8 @@ export class BrowserXlsbWriter {
         
         if (headers) {
             for (let i = 0; i < columnCount; i++) {
-                let w = 1.25 * (headers[i] ? headers[i].length : 0) + 2;
+                const len = headers[i] ? headers[i].length : 0;
+                let w = 1.3 * len + 3;
                 if (w > 80) w = 80;
                 if (this._colWidths[i] < w) this._colWidths[i] = w;
             }
@@ -233,7 +236,7 @@ export class BrowserXlsbWriter {
         
         if (headers) {
             this.createRowHeader(this._currentSheetBuffer, this._currentSheetRowNum, this._currentSheetStartCol, this._currentSheetEndCol);
-            for (let c = 0; c < headers.length; c++) this.writeString(this._currentSheetBuffer, headers[c], c, true);
+            for (let c = 0; c < headers.length; c++) this.writeString(this._currentSheetBuffer, headers[c], c, hs);
             this._currentSheetRowNum++;
         }
     }
@@ -278,14 +281,18 @@ export class BrowserXlsbWriter {
         this._currentSheetBuffer = null;
     }
 
-    writeSheet(rows, headers = null, doAutofilter = true) {
+    writeSheet(rows, headers = null, options = {}) {
+        const doAutofilter = options.doAutofilter !== false;
+        const headerStyle = options.headerStyle || 'bold';
+        let hs = 3; if (headerStyle === 'fill') hs = 4; else if (headerStyle === 'bold+fill') hs = 5;
         const bb = new BrowserBigBuffer();
         let colCount = rows.length > 0 ? rows[0].length : (headers ? headers.length : 0);
         this._colWidths = new Array(colCount).fill(-1.0);
         
         if (headers) {
             for (let i = 0; i < colCount; i++) {
-                let w = 1.25 * (headers[i] ? headers[i].length : 0) + 2;
+                const len = headers[i] ? headers[i].length : 0;
+                let w = 1.3 * len + 3;
                 if (w > 80) w = 80;
                 if (this._colWidths[i] < w) this._colWidths[i] = w;
             }
@@ -293,7 +300,8 @@ export class BrowserXlsbWriter {
         for (let r = 0; r < Math.min(rows.length, 100); r++) {
             for (let c = 0; c < rows[r].length; c++) {
                 const v = rows[r][c]; if (v == null) continue;
-                let w = 1.25 * (v ? v.toString().length : 0) + 2;
+                const len = (v instanceof Date) ? 10 : v.toString().length;
+                let w = 1.3 * len + 3;
                 if (w > 80) w = 80;
                 if (this._colWidths[c] < w) this._colWidths[c] = w;
             }
@@ -305,7 +313,7 @@ export class BrowserXlsbWriter {
         let rn = 0;
         if (headers) {
             this.createRowHeader(bb, rn, 0, colCount);
-            for (let c = 0; c < headers.length; c++) this.writeString(bb, headers[c], c, true);
+            for (let c = 0; c < headers.length; c++) this.writeString(bb, headers[c], c, hs);
             rn++;
         }
         
@@ -349,9 +357,8 @@ export class BrowserXlsbWriter {
         for (let i = startCol; i < endCol; i++) {
             bb.writeByte(0); bb.writeByte(60); bb.writeByte(18);
             bb.writeInt32LE(i); bb.writeInt32LE(i);
-            const w = this._colWidths[i] > 0 ? Math.floor(this._colWidths[i]) : 10;
-            bb.writeByte(0); bb.writeByte(Math.max(0, Math.min(255, w)));
-            bb.writeByte(0); bb.writeByte(0);
+            const w = this._colWidths[i] > 0 ? this._colWidths[i] : 10;
+            bb.writeInt32LE(Math.round(w * 256));
             bb.writeByte(0); bb.writeByte(0); bb.writeByte(0); bb.writeByte(0);
             bb.writeByte(2);
         }
@@ -407,7 +414,7 @@ export class BrowserXlsbWriter {
     writeDateTime(bb, date, colNum) {
         this.writeDouble(bb, (date.getTime() - this._oaEpoch) / 86400000, colNum, 1);
     }
-    writeString(bb, val, colNum, bolded = false) {
+    writeString(bb, val, colNum, styleIndex = 0) {
         let index;
         if (this._sstDic.has(val)) {
             index = this._sstDic.get(val);
@@ -418,7 +425,7 @@ export class BrowserXlsbWriter {
         this._sstCntAll++;
         bb.ensureCapacity(17);
         bb.writeUnsafeByte(7); bb.writeUnsafeByte(12);
-        bb.writeUnsafeInt32LE(colNum); bb.writeUnsafeByte(bolded ? 4 : 0); // style index 4 is bold in our binary styles
+        bb.writeUnsafeInt32LE(colNum); bb.writeUnsafeByte(styleIndex);
         bb.writeUnsafeByte(0); bb.writeUnsafeByte(0); bb.writeUnsafeByte(0);
         bb.writeUnsafeInt32LE(index);
     }
