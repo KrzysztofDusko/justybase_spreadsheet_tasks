@@ -30,6 +30,42 @@ A high-performance TypeScript library for reading and writing Excel files in XLS
 npm install @justybase/spreadsheet-tasks
 ```
 
+## 🌐 Browser Support & CDN (Zero Dependencies)
+
+This library includes browser-compatible modules to generate XLSB and XLSX files directly on the client side without relying on Node.js APIs or external dependencies.
+
+To bundle the browser version into a single minified file (e.g. for deployment to a CDN), run the following command in the project root:
+
+```bash
+npx esbuild browser/browser-spreadsheet.js --bundle --minify --format=esm --outfile=browser/justybase-spreadsheet.min.js
+```
+
+You can then import this single file via a script tag in any web application:
+
+```html
+<script type="module">
+  import { downloadXlsb, downloadXlsx } from 'https://your-cdn.com/justybase-spreadsheet.min.js';
+  
+  const headers = ["ID", "Name", "Score"];
+  const rows = [
+    [1, "Alice", 99.5],
+    [2, "Bob", 88.0]
+  ];
+  
+  // Generates the file and triggers the browser download automatically
+  document.getElementById('downloadBtn').addEventListener('click', () => {
+    downloadXlsb('report.xlsb', rows, headers, { headerStyle: 'bold+fill' });
+  });
+</script>
+```
+
+**Features included in the browser build:**
+- Built-in Zip archiving (no external libraries needed)
+- Memory-efficient `Uint8Array` buffer handling
+- Auto-fitted column widths
+- Frozen and styled headers (styles: `bold`, `fill`, `bold+fill`)
+- Auto-filters enabled by default
+
 ## 🔧 Quick Start
 
 ### Writing Excel Files
