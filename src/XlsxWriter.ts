@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import archiver from 'archiver';
 import { Readable } from 'stream';
 import { BigBuffer } from './BigBuffer';
+import { isFormattedCell, unwrapCell, getFormat } from './Formats';
 
 const COLUMN_LETTERS = (() => {
     const letters: string[] = [];
@@ -43,6 +44,12 @@ export class XlsxWriter {
     private _autofilterIsOn: boolean = false;
 
     private _oaEpoch: number;
+
+    // Format registry
+    private _formatRegistry: Map<string, number> = new Map();
+    private _formatXfMap: Map<string, number> = new Map();
+    private _nextNumfmtId: number = 165;
+    private _nextXfIndex: number = 3;
 
     // Streaming state
     private currentSheetBuffer: BigBuffer | null = null;
@@ -236,29 +243,35 @@ export class XlsxWriter {
         bigBuf.writeString(`<row r="${this.currentSheetRowNum}">`);
 
         for (let c = 0; c < row.length; c++) {
-            const val = row[c];
-            if (val === null || val === undefined) continue;
+            const raw = row[c];
+            if (raw === null || raw === undefined) continue;
+
+            const fmtString = getFormat(raw);
+            const val = fmtString !== null ? unwrapCell(raw) : raw;
+            const xfIdx = fmtString !== null ? this._registerFormat(fmtString) : -1;
+            const styleAttr = xfIdx >= 0 ? ` s="${xfIdx}"` : '';
 
             const colRef = this.currentColLetters[c];
             if (typeof val === 'number') {
                 if (Number.isFinite(val)) {
-                    bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}"><v>${val}</v></c>`);
+                    bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}"${styleAttr}><v>${val}</v></c>`);
                 } else {
-                    this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+                    this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum, xfIdx >= 0 ? xfIdx : undefined);
                 }
             } else if (typeof val === 'bigint') {
-                this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+                this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum, xfIdx >= 0 ? xfIdx : undefined);
             } else if (typeof val === 'boolean') {
-                bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}" t="b"><v>${val ? 1 : 0}</v></c>`);
+                bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}" t="b"${styleAttr}><v>${val ? 1 : 0}</v></c>`);
             } else if (val instanceof Date) {
                 const oaDate = this._toOADate(val);
                 if (Number.isFinite(oaDate)) {
-                    bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}" s="1"><v>${oaDate}</v></c>`);
+                    const finalStyle = xfIdx >= 0 ? xfIdx : 1;
+                    bigBuf.writeString(`<c r="${colRef}${this.currentSheetRowNum}" s="${finalStyle}"><v>${oaDate}</v></c>`);
                 } else {
-                    this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+                    this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum, xfIdx >= 0 ? xfIdx : undefined);
                 }
             } else {
-                this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum);
+                this._writeStringCell(bigBuf, val.toString(), colRef, this.currentSheetRowNum, xfIdx >= 0 ? xfIdx : undefined);
             }
         }
         bigBuf.writeString('</row>');
@@ -327,8 +340,9 @@ export class XlsxWriter {
         for (let r = 0; r < Math.min(rows.length, 100); r++) {
             const row = rows[r];
             for (let c = 0; c < row.length; c++) {
-                const val = row[c];
-                if (val === null || val === undefined) continue;
+                const raw = row[c];
+                if (raw === null || raw === undefined) continue;
+                const val = isFormattedCell(raw) ? raw.value : raw;
                 const len = val instanceof Date ? 10 : val.toString().length;
                 let width = 1.25 * len + 2;
                 if (width > 80) width = 80;
@@ -384,29 +398,35 @@ export class XlsxWriter {
             bigBuf.writeString(`<row r="${rowNum}">`);
             const row = rows[r];
             for (let c = 0; c < row.length; c++) {
-                const val = row[c];
-                if (val === null || val === undefined) continue;
+                const raw = row[c];
+                if (raw === null || raw === undefined) continue;
+
+                const fmtString = getFormat(raw);
+                const val = fmtString !== null ? unwrapCell(raw) : raw;
+                const xfIdx = fmtString !== null ? this._registerFormat(fmtString) : -1;
+                const styleAttr = xfIdx >= 0 ? ` s="${xfIdx}"` : '';
 
                 const colRef = colLetters[c];
                 if (typeof val === 'number') {
                     if (Number.isFinite(val)) {
-                        bigBuf.writeString(`<c r="${colRef}${rowNum}"><v>${val}</v></c>`);
+                        bigBuf.writeString(`<c r="${colRef}${rowNum}"${styleAttr}><v>${val}</v></c>`);
                     } else {
-                        this._writeStringCell(bigBuf, val.toString(), colRef, rowNum);
+                        this._writeStringCell(bigBuf, val.toString(), colRef, rowNum, xfIdx >= 0 ? xfIdx : undefined);
                     }
                 } else if (typeof val === 'bigint') {
-                    this._writeStringCell(bigBuf, val.toString(), colRef, rowNum);
+                    this._writeStringCell(bigBuf, val.toString(), colRef, rowNum, xfIdx >= 0 ? xfIdx : undefined);
                 } else if (typeof val === 'boolean') {
-                    bigBuf.writeString(`<c r="${colRef}${rowNum}" t="b"><v>${val ? 1 : 0}</v></c>`);
+                    bigBuf.writeString(`<c r="${colRef}${rowNum}" t="b"${styleAttr}><v>${val ? 1 : 0}</v></c>`);
                 } else if (val instanceof Date) {
                     const oaDate = this._toOADate(val);
                     if (Number.isFinite(oaDate)) {
-                        bigBuf.writeString(`<c r="${colRef}${rowNum}" s="1"><v>${oaDate}</v></c>`);
+                        const finalStyle = xfIdx >= 0 ? xfIdx : 1;
+                        bigBuf.writeString(`<c r="${colRef}${rowNum}" s="${finalStyle}"><v>${oaDate}</v></c>`);
                     } else {
-                        this._writeStringCell(bigBuf, val.toString(), colRef, rowNum);
+                        this._writeStringCell(bigBuf, val.toString(), colRef, rowNum, xfIdx >= 0 ? xfIdx : undefined);
                     }
                 } else {
-                    this._writeStringCell(bigBuf, val.toString(), colRef, rowNum);
+                    this._writeStringCell(bigBuf, val.toString(), colRef, rowNum, xfIdx >= 0 ? xfIdx : undefined);
                 }
             }
             bigBuf.writeString('</row>');
@@ -431,7 +451,7 @@ export class XlsxWriter {
         });
     }
 
-    private _writeStringCell(bigBuf: BigBuffer, val: string, colRef: string, rowNum: number): void {
+    private _writeStringCell(bigBuf: BigBuffer, val: string, colRef: string, rowNum: number, styleOverride?: number): void {
         let index = this.sstMap.get(val);
         if (index === undefined) {
             index = this.sstArray.length;
@@ -439,7 +459,19 @@ export class XlsxWriter {
             this.sstMap.set(val, index);
         }
         this.sstCntAll++;
-        bigBuf.writeString(`<c r="${colRef}${rowNum}" t="s"><v>${index}</v></c>`);
+        const styleAttr = styleOverride !== undefined ? ` s="${styleOverride}"` : '';
+        bigBuf.writeString(`<c r="${colRef}${rowNum}" t="s"${styleAttr}><v>${index}</v></c>`);
+    }
+
+    private _registerFormat(fmtString: string): number {
+        if (this._formatXfMap.has(fmtString)) {
+            return this._formatXfMap.get(fmtString)!;
+        }
+        const numfmtId = this._nextNumfmtId++;
+        this._formatRegistry.set(fmtString, numfmtId);
+        const xfIndex = this._nextXfIndex++;
+        this._formatXfMap.set(fmtString, xfIndex);
+        return xfIndex;
     }
 
     private _toOADate(date: Date): number {
@@ -493,10 +525,38 @@ export class XlsxWriter {
     }
 
     private _writeStyles(): void {
+        let numFmts = '';
+        let numFmtCount = 1;
+        numFmts += '<numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm:ss"/>';
+
+        const xfEntries: string[] = [];
+        xfEntries.push('<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>');
+        xfEntries.push('<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>');
+        xfEntries.push('<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>');
+
+        for (const [fmtString, numfmtId] of this._formatRegistry) {
+            const escapedFmt = fmtString
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+            numFmts += `<numFmt numFmtId="${numfmtId}" formatCode="${escapedFmt}"/>`;
+            numFmtCount++;
+        }
+
+        const sortedFormats = [...this._formatXfMap.entries()].sort((a, b) => a[1] - b[1]);
+        for (const [fmtString] of sortedFormats) {
+            const numfmtId = this._formatRegistry.get(fmtString)!;
+            xfEntries.push(`<xf numFmtId="${numfmtId}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`);
+        }
+
+        const totalXf = xfEntries.length;
+
         const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="1">
-    <numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm:ss"/>
+<numFmts count="${numFmtCount}">
+${numFmts}
 </numFmts>
 <fonts count="1">
 <font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
@@ -511,10 +571,8 @@ export class XlsxWriter {
 <cellStyleXfs count="1">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
 </cellStyleXfs>
-<cellXfs count="3">
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
-<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<cellXfs count="${totalXf}">
+${xfEntries.join('\n')}
 </cellXfs>
 <cellStyles count="1">
 <cellStyle name="Normal" xfId="0" builtinId="0"/>

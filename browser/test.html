@@ -20,6 +20,7 @@
 
     <script type="module">
         import { BrowserXlsxWriter, BrowserXlsbWriter } from './browser-spreadsheet.js';
+        import { F } from './Formats.js';
 
         const resultsDiv = document.getElementById('results');
         const btnDownload = document.getElementById('btnDownload');
@@ -94,6 +95,70 @@
                     log(`Streaming API generated blob successfully (${streamBlob.size} bytes).`, false, true);
                 } else {
                     log("Streaming API returned empty or invalid blob.", true);
+                }
+
+                // Format Tests
+                log("Testing Formatted Cells (XLSB)...");
+                const fmtXlsb = new BrowserXlsbWriter();
+                fmtXlsb.addSheet('Formats');
+                const fmtDate = new Date(2026, 5, 1, 14, 34, 20);
+                fmtXlsb.writeSheet([
+                    ['Name', 'Value'],
+                    ['Thousands', { value: 1234567.89, format: F.THOUSANDS_SEP }],
+                    ['PLN', { value: 1234567.89, format: F.CURRENCY_PLN }],
+                    ['EUR', { value: 1234567.89, format: F.CURRENCY_EUR }],
+                    ['Percent', { value: 0.125, format: F.PERCENTAGE }],
+                    ['Scientific', { value: 1234567.89, format: F.SCIENTIFIC }],
+                    ['Two decimals', { value: 1234567.89, format: F.TWO_DECIMALS }],
+                    ['Text', { value: 1234567.89, format: F.TEXT }],
+                    ['Leading zeros', { value: 42, format: F.LEADING_ZEROS }],
+                    ['Short date', { value: fmtDate, format: F.DATE_SHORT }],
+                    ['Long date', { value: fmtDate, format: F.DATE_LONG }],
+                    ['ISO date', { value: fmtDate, format: F.DATE_ISO }],
+                    ['Weekday', { value: fmtDate, format: F.DATE_WEEKDAY }],
+                    ['Year only', { value: fmtDate, format: F.DATE_YEAR_ONLY }],
+                    ['Short DT', { value: fmtDate, format: F.DATETIME_SHORT }],
+                    ['Long DT', { value: fmtDate, format: F.DATETIME_LONG }],
+                    ['Time', { value: fmtDate, format: F.TIME_HH_MM_SS }],
+                    ['Time 12h', { value: fmtDate, format: F.TIME_12H }],
+                    ['ISO DT', { value: fmtDate, format: F.DATETIME_ISO }],
+                    ['MS', { value: fmtDate, format: F.TIME_MS }],
+                ], ['Format', 'Value']);
+                const fmtXlsbBlob = fmtXlsb.finalize();
+                if (fmtXlsbBlob && fmtXlsbBlob.size > 0) {
+                    log(`Formatted XLSB blob generated (${fmtXlsbBlob.size} bytes).`, false, true);
+                    generatedBlobs['formats_test.xlsb'] = fmtXlsbBlob;
+                } else {
+                    log("Formatted XLSB returned empty blob.", true);
+                }
+
+                log("Testing Formatted Cells (XLSX)...");
+                const fmtXlsx = new BrowserXlsxWriter();
+                fmtXlsx.addSheet('Formats');
+                fmtXlsx.writeSheet([
+                    ['Name', 'Value'],
+                    ['Thousands', { value: 1234567.89, format: F.THOUSANDS_SEP }],
+                    ['PLN', { value: 1234567.89, format: F.CURRENCY_PLN }],
+                    ['EUR', { value: 1234567.89, format: F.CURRENCY_EUR }],
+                    ['Percent', { value: 0.125, format: F.PERCENTAGE }],
+                    ['Scientific', { value: 1234567.89, format: F.SCIENTIFIC }],
+                    ['Two decimals', { value: 1234567.89, format: F.TWO_DECIMALS }],
+                    ['Text', { value: 1234567.89, format: F.TEXT }],
+                    ['Leading zeros', { value: 42, format: F.LEADING_ZEROS }],
+                    ['Short date', { value: fmtDate, format: F.DATE_SHORT }],
+                    ['Long date', { value: fmtDate, format: F.DATE_LONG }],
+                    ['ISO', { value: fmtDate, format: F.DATE_ISO }],
+                    ['Short DT', { value: fmtDate, format: F.DATETIME_SHORT }],
+                    ['Long DT', { value: fmtDate, format: F.DATETIME_LONG }],
+                    ['Time', { value: fmtDate, format: F.TIME_HH_MM_SS }],
+                    ['ISO DT', { value: fmtDate, format: F.DATETIME_ISO }],
+                ], ['Format', 'Value']);
+                const fmtXlsxBlob = fmtXlsx.finalize();
+                if (fmtXlsxBlob && fmtXlsxBlob.size > 0) {
+                    log(`Formatted XLSX blob generated (${fmtXlsxBlob.size} bytes).`, false, true);
+                    generatedBlobs['formats_test.xlsx'] = fmtXlsxBlob;
+                } else {
+                    log("Formatted XLSX returned empty blob.", true);
                 }
 
                 log("All tests completed without throwing errors!", false, true);

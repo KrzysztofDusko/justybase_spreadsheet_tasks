@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import archiver from 'archiver';
 import { Readable } from 'stream';
 import { BigBuffer } from './BigBuffer';
+import { isFormattedCell, unwrapCell, getFormat } from './Formats';
 
 const INVALID_SHEET_NAME_CHARS = /[\\/*?[\]:]/g;
 
@@ -33,6 +34,9 @@ export class XlsbWriter {
     private _autofilterIsOn: boolean = false;
 
     private _oaEpoch: number;
+    private _nextFmtId: number = 167;
+    private _nextXfIdx: number = 4;
+    private _stFmtRecords: Map<string, { numfmtId: number; xfIndex: number }> = new Map();
 
     private _sheet1Bytes: Buffer;
     private _workbookBinStart: Buffer;
@@ -182,10 +186,10 @@ export class XlsbWriter {
             0x00, 0xF3, 0x04, 0x00, 0xE9, 0x04, 0x04,
             0x04,
             0x00, 0x00, 0x00,
-            0x2F, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00,
-            0x2F, 0x10, 0x00, 0x00, 0xA4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00,
-            0x2F, 0x10, 0x00, 0x00, 0xA6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00,
-            0x2F, 0x10, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00,
+            0x2F, 0x10, 0x00, 0x00, 0x00, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00,
+            0x2F, 0x10, 0x00, 0x00, 0xA4, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00,
+            0x2F, 0x10, 0x00, 0x00, 0xA6, 0x00,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x01, 0x00,
+            0x2F, 0x10, 0x00, 0x00, 0x00, 0x01,    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00,
             0xEA, 0x04, 0x00, 0xEB, 0x04, 0x04, 0x01, 0x00,
             0x00, 0x00, 0x25, 0x06, 0x01, 0x00, 0x02, 0x11, 0x00, 0x80, 0x80, 0x18, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x26, 0x00, 0x30, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x4E,
@@ -242,6 +246,151 @@ export class XlsbWriter {
             sanitized = `Sheet${this.sheetCount + 1}`;
         }
         return sanitized;
+    }
+
+    private _registerFormat(fmtString: string): number {
+        if (this._stFmtRecords.has(fmtString)) {
+            return this._stFmtRecords.get(fmtString)!.xfIndex;
+        }
+        const numfmtId = this._nextFmtId++;
+        const xfIndex = this._nextXfIdx++;
+        this._stFmtRecords.set(fmtString, { numfmtId, xfIndex });
+        return xfIndex;
+    }
+
+    private static _buildBrtRecord(type: number, data: Buffer): Buffer {
+        const header = XlsbWriter._encodeVlq(type);
+        header.push(...XlsbWriter._encodeVlq(data.length));
+        return Buffer.concat([Buffer.from(header), data]);
+    }
+
+    private static _encodeVlq(value: number): number[] {
+        const result: number[] = [];
+        while (value >= 0x80) {
+            result.push((value & 0x7F) | 0x80);
+            value >>>= 7;
+        }
+        result.push(value & 0x7F);
+        return result;
+    }
+
+    private static _buildStFmtRecord(ifmt: number, fmtString: string): Buffer {
+        const cch = fmtString.length;
+        const remaining = 2 + 4 + cch * 2;
+        const data = Buffer.alloc(2 + remaining);
+        data[0] = 0x2C;
+        data[1] = remaining;
+        data.writeUInt16LE(ifmt, 2);
+        data.writeUInt32LE(cch, 4);
+        data.write(fmtString, 8, cch * 2, 'utf16le');
+        return data;
+    }
+
+    private static _buildXfRecord(fontId: number, ifmt: number, flags: number, byte6Extra: number = 0): Buffer {
+        const data = Buffer.alloc(18);
+        data[0] = 0x2F;
+        data[1] = 16;
+        data.writeUInt16LE(fontId, 2);
+        data.writeUInt16LE(ifmt, 4);
+        data[6] = byte6Extra;
+        data[14] = 0x10;
+        data[15] = 0x10;
+        data.writeUInt16LE(flags, 16);
+        return data;
+    }
+
+    private _buildStylesBin(): Buffer {
+        if (this._stFmtRecords.size === 0) {
+            return this._stylesBin;
+        }
+        const base = this._stylesBin;
+
+        // Find BrtEndFonts (0xE8, 0x04, 0x00)
+        let fontEndOff = -1;
+        for (let i = 3; i < base.length - 3; i++) {
+            if (base[i] === 0xE8 && base[i + 1] === 0x04 && base[i + 2] === 0x00) {
+                fontEndOff = i;
+                break;
+            }
+        }
+
+        // Find BrtBeginCellXFs (0xE9, 0x04)
+        let xfBeginOff = -1;
+        for (let i = fontEndOff + 3; i < base.length - 2; i++) {
+            if (base[i] === 0xE9 && base[i + 1] === 0x04) {
+                xfBeginOff = i;
+                break;
+            }
+        }
+
+        // Find BrtEndCellXFs (0xEA, 0x04, 0x00)
+        let xfEndOff = -1;
+        for (let i = xfBeginOff; i < base.length - 3; i++) {
+            if (base[i] === 0xEA && base[i + 1] === 0x04 && base[i + 2] === 0x00) {
+                xfEndOff = i;
+                break;
+            }
+        }
+
+        // Find BrtBeginFills (0xE3, 0x04) — start after BrtEndFonts
+        let fillBeginOff = -1;
+        for (let i = fontEndOff + 3; i < base.length - 2; i++) {
+            if (base[i] === 0xE3 && base[i + 1] === 0x04) {
+                fillBeginOff = i;
+                break;
+            }
+        }
+
+        const totalFmt = 2 + this._stFmtRecords.size;
+        const totalXf = 4 + this._stFmtRecords.size;
+
+        const parts: Buffer[] = [];
+
+        // 1. BrtBeginStyleSheet
+        parts.push(base.subarray(0, 3));
+
+        // 2. NEW BrtFmt: VLQ(0x0267) + VLQ(4) + count(2 LE) + pad(2)
+        const fmtHeader = Buffer.alloc(4);
+        fmtHeader.writeUInt16LE(totalFmt, 0);
+        parts.push(XlsbWriter._buildBrtRecord(0x0267, fmtHeader));
+
+        // 3. BrtNumFmt records: 2 base + custom
+        parts.push(XlsbWriter._buildStFmtRecord(164, 'yyyy\\-mm\\-dd\\ hh:mm:ss'));
+        parts.push(XlsbWriter._buildStFmtRecord(166, 'yyyy\\-mm\\-dd'));
+        for (const [fmtString, st] of this._stFmtRecords) {
+            parts.push(XlsbWriter._buildStFmtRecord(st.numfmtId, fmtString));
+        }
+
+        // 4. BrtEndFonts
+        parts.push(XlsbWriter._buildBrtRecord(0x0268, Buffer.alloc(0)));
+
+        // 5. Copy fills+borders+BrtFont+cellStyleXFs from template
+        parts.push(base.subarray(fillBeginOff, xfBeginOff));
+
+        // 7. NEW BrtBeginCellXFs
+        const xfHeader = Buffer.alloc(4);
+        xfHeader.writeUInt16LE(totalXf, 0);
+        parts.push(XlsbWriter._buildBrtRecord(0x0269, xfHeader));
+
+        // 8. Base XF records
+        parts.push(XlsbWriter._buildXfRecord(0, 0, 0x0000));
+        parts.push(XlsbWriter._buildXfRecord(0, 164, 0x0001));
+        parts.push(XlsbWriter._buildXfRecord(0, 166, 0x0001));
+        parts.push(XlsbWriter._buildXfRecord(1, 0, 0x0000, 1));
+
+        // 9. Custom XF records
+        const sortedXf = [...this._stFmtRecords.entries()].sort((a, b) => a[1].xfIndex - b[1].xfIndex);
+        for (const [, st] of sortedXf) {
+            parts.push(XlsbWriter._buildXfRecord(0, st.numfmtId, 0x0001));
+        }
+
+        // 10. BrtEndCellXFs
+        parts.push(XlsbWriter._buildBrtRecord(0x026A, Buffer.alloc(0)));
+
+        // 11. Copy remaining template
+        parts.push(base.subarray(xfEndOff + 3));
+
+        return Buffer.concat(parts);
     }
 
     addSheet(sheetName: string, hidden: boolean = false): void {
@@ -385,27 +534,32 @@ export class XlsbWriter {
 
         // Write each cell
         for (let c = 0; c < row.length; c++) {
-            const val = row[c];
-            if (val === null || val === undefined) continue;
+            const raw = row[c];
+            if (raw === null || raw === undefined) continue;
+
+            const fmtString = getFormat(raw);
+            const val = fmtString !== null ? unwrapCell(raw) : raw;
+            const styleNum = fmtString !== null ? this._registerFormat(fmtString) : 0;
 
             if (typeof val === 'number') {
                 if (Number.isInteger(val)) {
                     if (val >= this._rRkIntegerLowerLimit && val <= this._rRkIntegerUpperLimit) {
-                        this.writeRkNumberInteger(bigBuf, val, c);
+                        this.writeRkNumberInteger(bigBuf, val, c, styleNum);
                     } else {
-                        this.writeDouble(bigBuf, val, c);
+                        this.writeDouble(bigBuf, val, c, styleNum);
                     }
                 } else {
-                    this.writeDouble(bigBuf, val, c);
+                    this.writeDouble(bigBuf, val, c, styleNum);
                 }
             } else if (typeof val === 'bigint') {
                 this.writeString(bigBuf, val.toString(), c);
             } else if (typeof val === 'boolean') {
                 this.writeBool(bigBuf, val, c);
             } else if (val instanceof Date) {
-                this.writeDateTime(bigBuf, val, c);
+                const oaDate = (val.getTime() - this._oaEpoch) / 86400000;
+                this.writeDouble(bigBuf, oaDate, c, fmtString !== null ? styleNum : 1);
             } else {
-                this.writeString(bigBuf, val.toString(), c);
+                this.writeString(bigBuf, val.toString(), c, false, fmtString !== null ? styleNum : undefined);
             }
         }
 
@@ -498,8 +652,10 @@ export class XlsbWriter {
         for (let r = 0; r < Math.min(rows.length, 100); r++) {
             const row = rows[r];
             for (let c = 0; c < row.length; c++) {
-                const val = row[c];
-                const len = val ? val.toString().length : 0;
+                const raw = row[c];
+                if (raw === null || raw === undefined) continue;
+                const val = isFormattedCell(raw) ? raw.value : raw;
+                const len = val instanceof Date ? 10 : val.toString().length;
                 let width = 1.25 * len + 2;
                 if (width > 80) width = 80;
                 if (this.colWidths[c] < width) this.colWidths[c] = width;
@@ -572,27 +728,32 @@ export class XlsbWriter {
             this.createRowHeader(bigBuf, rowNum, startCol, endCol);
             const row = rows[r];
             for (let c = 0; c < row.length; c++) {
-                const val = row[c];
-                if (val === null || val === undefined) continue;
+                const raw = row[c];
+                if (raw === null || raw === undefined) continue;
+
+                const fmtString = getFormat(raw);
+                const val = fmtString !== null ? unwrapCell(raw) : raw;
+                const styleNum = fmtString !== null ? this._registerFormat(fmtString) : 0;
 
                 if (typeof val === 'number') {
                     if (Number.isInteger(val)) {
                         if (val >= this._rRkIntegerLowerLimit && val <= this._rRkIntegerUpperLimit) {
-                            this.writeRkNumberInteger(bigBuf, val, c);
+                            this.writeRkNumberInteger(bigBuf, val, c, styleNum);
                         } else {
-                            this.writeDouble(bigBuf, val, c);
+                            this.writeDouble(bigBuf, val, c, styleNum);
                         }
                     } else {
-                        this.writeDouble(bigBuf, val, c);
+                        this.writeDouble(bigBuf, val, c, styleNum);
                     }
                 } else if (typeof val === 'bigint') {
                     this.writeString(bigBuf, val.toString(), c);
                 } else if (typeof val === 'boolean') {
                     this.writeBool(bigBuf, val, c);
                 } else if (val instanceof Date) {
-                    this.writeDateTime(bigBuf, val, c);
+                    const oaDate = (val.getTime() - this._oaEpoch) / 86400000;
+                    this.writeDouble(bigBuf, oaDate, c, fmtString !== null ? styleNum : 1);
                 } else {
-                    this.writeString(bigBuf, val.toString(), c);
+                    this.writeString(bigBuf, val.toString(), c, false, fmtString !== null ? styleNum : undefined);
                 }
             }
             rowNum++;
@@ -693,7 +854,7 @@ export class XlsbWriter {
         this.writeDouble(bigBuf, oaDate, colNum, 1);
     }
 
-    writeString(bigBuf: BigBuffer, val: string, colNum: number, bolded: boolean = false): void {
+    writeString(bigBuf: BigBuffer, val: string, colNum: number, bolded: boolean = false, styleOverride?: number): void {
         let index: number;
         if (this.sstDic.has(val)) {
             index = this.sstDic.get(val)!;
@@ -704,11 +865,12 @@ export class XlsbWriter {
         }
         this.sstCntAll++;
 
+        const styleNum = styleOverride !== undefined ? styleOverride : (bolded ? 3 : 0);
         bigBuf.ensureCapacity(17);
         bigBuf.writeUnsafeByte(7);
         bigBuf.writeUnsafeByte(12);
         bigBuf.writeUnsafeInt32LE(colNum);
-        bigBuf.writeUnsafeByte(bolded ? 3 : 0);
+        bigBuf.writeUnsafeByte(styleNum);
         bigBuf.writeUnsafeByte(0);
         bigBuf.writeUnsafeByte(0);
         bigBuf.writeUnsafeByte(0);
@@ -792,7 +954,7 @@ export class XlsbWriter {
             try {
                 this.saveSst();
 
-                this.archive.append(this._stylesBin, { name: 'xl/styles.bin' });
+                this.archive.append(this._buildStylesBin(), { name: 'xl/styles.bin' });
 
                 const wbBuffers: Buffer[] = [];
                 wbBuffers.push(this._workbookBinStart);

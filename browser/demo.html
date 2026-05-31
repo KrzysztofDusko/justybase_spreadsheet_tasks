@@ -39,8 +39,16 @@
         <button id="btnMultiXlsb" class="xlsb">Download Multi-Sheet XLSB</button>
     </div>
 
+    <div class="btn-group">
+        <h3>Formatted Cells (Number/Date/Time formats)</h3>
+        <p style="font-size: 13px; color: #666; margin: 4px 0 8px 0;">Tests all 23 format constants: thousands, currencies, percentages, scientific, dates, times, etc.</p>
+        <button id="btnFmtXlsx">Download Formatted XLSX</button>
+        <button id="btnFmtXlsb" class="xlsb">Download Formatted XLSB</button>
+    </div>
+
     <script type="module">
         import { downloadXlsx, downloadXlsb, downloadXlsxMultiSheet, downloadXlsbMultiSheet } from './browser-spreadsheet.js';
+        import { F } from './Formats.js';
 
         const simpleHeaders = ['Name', 'Age', 'City', 'Score', 'Active'];
         const simpleRows = [
@@ -80,6 +88,37 @@
 
         document.getElementById('btnMultiXlsx').onclick = () => downloadXlsxMultiSheet('multi_sheet.xlsx', multiSheets);
         document.getElementById('btnMultiXlsb').onclick = () => downloadXlsbMultiSheet('multi_sheet.xlsb', multiSheets);
+
+        const demoDate = new Date(2026, 5, 1, 14, 34, 20);
+        const fmtHeaders = ['Format', 'Value'];
+        const fmtRows = [
+            ['Plain', 1234567.89],
+            ['Thousands', { value: 1234567.89, format: F.THOUSANDS_SEP }],
+            ['Currency PLN', { value: 1234567.89, format: F.CURRENCY_PLN }],
+            ['Currency EUR', { value: 1234567.89, format: F.CURRENCY_EUR }],
+            ['Percent', { value: 0.125, format: F.PERCENTAGE }],
+            ['Scientific', { value: 1234567.89, format: F.SCIENTIFIC }],
+            ['Two Decimals', { value: 1234567.89, format: F.TWO_DECIMALS }],
+            ['Text', { value: 1234567.89, format: F.TEXT }],
+            ['Leading Zeros', { value: 42, format: F.LEADING_ZEROS }],
+            ['Date Short', { value: demoDate, format: F.DATE_SHORT }],
+            ['Date Long', { value: demoDate, format: F.DATE_LONG }],
+            ['Date ISO', { value: demoDate, format: F.DATE_ISO }],
+            ['Date Month+Year', { value: demoDate, format: F.DATE_MONTH_YEAR }],
+            ['Date Weekday', { value: demoDate, format: F.DATE_WEEKDAY }],
+            ['Date Year Only', { value: demoDate, format: F.DATE_YEAR_ONLY }],
+            ['DateTime Short', { value: demoDate, format: F.DATETIME_SHORT }],
+            ['DateTime Long', { value: demoDate, format: F.DATETIME_LONG }],
+            ['Time HH:MM', { value: demoDate, format: F.TIME_HH_MM }],
+            ['Time HH:MM:SS', { value: demoDate, format: F.TIME_HH_MM_SS }],
+            ['Time 12h', { value: demoDate, format: F.TIME_12H }],
+            ['DateTime 24h', { value: demoDate, format: F.DATETIME_24H }],
+            ['DateTime ISO', { value: demoDate, format: F.DATETIME_ISO }],
+            ['Time MS', { value: demoDate, format: F.TIME_MS }],
+        ];
+
+        document.getElementById('btnFmtXlsx').onclick = () => downloadXlsx('formats_demo.xlsx', fmtRows, fmtHeaders);
+        document.getElementById('btnFmtXlsb').onclick = () => downloadXlsb('formats_demo.xlsb', fmtRows, fmtHeaders);
     </script>
 </body>
 </html>

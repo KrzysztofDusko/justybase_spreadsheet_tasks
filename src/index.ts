@@ -11,3 +11,6 @@ export { ReaderFactory } from './ReaderFactory';
 // Writers
 export { XlsbWriter } from './XlsbWriter';
 export { XlsxWriter } from './XlsxWriter';
+
+// Formatting
+export { FormattedCell, F, isFormattedCell, unwrapCell, getFormat } from './Formats';

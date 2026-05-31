@@ -6,6 +6,7 @@
  */
 import { BrowserBigBuffer } from './BrowserBigBuffer.js';
 import { BrowserZip } from './BrowserZip.js';
+import { isFormattedCell, unwrapCell, getFormat } from './Formats.js';
 
 const INVALID_SHEET_NAME_CHARS = /[\\/*?[\]:]/g;
 
@@ -27,6 +28,10 @@ export class BrowserXlsbWriter {
         this._currentSheetStartCol = 0;
         this._currentSheetEndCol = 0;
         this._currentSheetDoAutofilter = false;
+
+        this._fmtMap = new Map();
+        this._nextNid = 167;
+        this._nextXf = 4;
 
         this._sheet1Bytes = new Uint8Array([
             0x81, 0x01, 0x00, 0x93, 0x01, 0x17, 0xCB, 0x04,
@@ -198,6 +203,85 @@ export class BrowserXlsbWriter {
         return s;
     }
 
+    _registerFormat(fmtString) {
+        if (this._fmtMap.has(fmtString)) return this._fmtMap.get(fmtString).xf;
+        const nid = this._nextNid++;
+        const xf = this._nextXf++;
+        this._fmtMap.set(fmtString, { nid, xf });
+        return xf;
+    }
+
+    _buildStylesBin() {
+        if (this._fmtMap.size === 0) return this._stylesBin;
+        const base = this._stylesBin;
+
+        let fontEndOff = -1;
+        for (let i = 3; i < base.length - 3; i++) {
+            if (base[i] === 0xE8 && base[i + 1] === 0x04 && base[i + 2] === 0x00) { fontEndOff = i; break; }
+        }
+        let xfBeginOff = -1;
+        for (let i = fontEndOff + 3; i < base.length - 2; i++) {
+            if (base[i] === 0xE9 && base[i + 1] === 0x04) { xfBeginOff = i; break; }
+        }
+        let xfEndOff = -1;
+        for (let i = xfBeginOff; i < base.length - 3; i++) {
+            if (base[i] === 0xEA && base[i + 1] === 0x04 && base[i + 2] === 0x00) { xfEndOff = i; break; }
+        }
+        let fillBeginOff = -1;
+        for (let i = fontEndOff + 3; i < base.length - 2; i++) {
+            if (base[i] === 0xE3 && base[i + 1] === 0x04) { fillBeginOff = i; break; }
+        }
+
+        const tf = 2 + this._fmtMap.size;
+        const tx = 4 + this._fmtMap.size;
+        const p = [];
+
+        function vlq(v) { const r = []; while (v >= 128) { r.push((v & 127) | 128); v >>>= 7; } r.push(v & 127); return r; }
+        function brt(t, d) { return new Uint8Array([...vlq(t), ...vlq(d.length), ...d]); }
+        function stFmt(ifmt, fs) {
+            const cch = fs.length, rem = 2 + 4 + cch * 2;
+            const buf = new Uint8Array(2 + rem);
+            buf[0] = 0x2C; buf[1] = rem;
+            const dv = new DataView(buf.buffer);
+            dv.setUint16(2, ifmt, true); dv.setUint32(4, cch, true);
+            for (let i = 0; i < cch; i++) { const cp = fs.charCodeAt(i); buf[8 + i * 2] = cp & 0xFF; buf[8 + i * 2 + 1] = (cp >> 8) & 0xFF; }
+            return buf;
+        }
+        function xfRec(fid, ifmt, fl, be = 0) {
+            const buf = new Uint8Array(18);
+            const dv = new DataView(buf.buffer);
+            buf[0] = 0x2F; buf[1] = 16;
+            dv.setUint16(2, fid, true); dv.setUint16(4, ifmt, true);
+            buf[6] = be; buf[14] = 0x10; buf[15] = 0x10;
+            dv.setUint16(16, fl, true);
+            return buf;
+        }
+
+        p.push(base.subarray(0, 3));
+        const fh = new Uint8Array(4); new DataView(fh.buffer).setUint16(0, tf, true);
+        p.push(brt(0x0267, fh));
+        p.push(stFmt(164, 'yyyy\\-mm\\-dd\\ hh:mm:ss'));
+        p.push(stFmt(166, 'yyyy\\-mm\\-dd'));
+        for (const [fs, st] of this._fmtMap) p.push(stFmt(st.nid, fs));
+        p.push(brt(0x0268, new Uint8Array(0)));
+        p.push(base.subarray(fillBeginOff, xfBeginOff));
+        const xh = new Uint8Array(4); new DataView(xh.buffer).setUint16(0, tx, true);
+        p.push(brt(0x0269, xh));
+        p.push(xfRec(0, 0, 0x0000));
+        p.push(xfRec(0, 164, 0x0001));
+        p.push(xfRec(0, 166, 0x0001));
+        p.push(xfRec(1, 0, 0x0000, 1));
+        const sortedXf = [...this._fmtMap.entries()].sort((a, b) => a[1].xf - b[1].xf);
+        for (const [, st] of sortedXf) p.push(xfRec(0, st.nid, 0x0001));
+        p.push(brt(0x026A, new Uint8Array(0)));
+        p.push(base.subarray(xfEndOff + 3));
+
+        let tl = 0; for (const c of p) tl += c.length;
+        const r = new Uint8Array(tl); let pos = 0;
+        for (const c of p) { r.set(c, pos); pos += c.length; }
+        return r;
+    }
+
     addSheet(sheetName, hidden = false) {
         const s = this._sanitizeSheetName(sheetName);
         this._sheetCount++;
@@ -299,7 +383,8 @@ export class BrowserXlsbWriter {
         }
         for (let r = 0; r < Math.min(rows.length, 100); r++) {
             for (let c = 0; c < rows[r].length; c++) {
-                const v = rows[r][c]; if (v == null) continue;
+                const raw = rows[r][c]; if (raw == null) continue;
+                const v = isFormattedCell(raw) ? raw.value : raw;
                 const len = (v instanceof Date) ? 10 : v.toString().length;
                 let w = 1.3 * len + 3;
                 if (w > 80) w = 80;
@@ -367,22 +452,27 @@ export class BrowserXlsbWriter {
         bb.write(new Uint8Array([38, 0]));
     }
 
-    _writeCell(bb, val, c) {
-        if (val === null || val === undefined) return;
+    _writeCell(bb, raw, c) {
+        if (raw === null || raw === undefined) return;
+        const fmtString = getFormat(raw);
+        const val = fmtString !== null ? unwrapCell(raw) : raw;
+        const styleNum = fmtString !== null ? this._registerFormat(fmtString) : 0;
+
         if (typeof val === 'number') {
             if (Number.isInteger(val) && val >= this._rRkIntegerLowerLimit && val <= this._rRkIntegerUpperLimit) {
-                this.writeRkNumberInteger(bb, val, c);
+                this.writeRkNumberInteger(bb, val, c, styleNum);
             } else {
-                this.writeDouble(bb, val, c);
+                this.writeDouble(bb, val, c, styleNum);
             }
         } else if (typeof val === 'bigint') {
             this.writeString(bb, val.toString(), c);
         } else if (typeof val === 'boolean') {
             this.writeBool(bb, val, c);
         } else if (val instanceof Date) {
-            this.writeDateTime(bb, val, c);
+            const oaDate = (val.getTime() - this._oaEpoch) / 86400000;
+            this.writeDouble(bb, oaDate, c, fmtString !== null ? styleNum : 1);
         } else {
-            this.writeString(bb, val.toString(), c);
+            this.writeString(bb, val.toString(), c, 0, fmtString !== null ? styleNum : undefined);
         }
     }
 
@@ -414,7 +504,7 @@ export class BrowserXlsbWriter {
     writeDateTime(bb, date, colNum) {
         this.writeDouble(bb, (date.getTime() - this._oaEpoch) / 86400000, colNum, 1);
     }
-    writeString(bb, val, colNum, styleIndex = 0) {
+    writeString(bb, val, colNum, styleIndex = 0, styleOverride = undefined) {
         let index;
         if (this._sstDic.has(val)) {
             index = this._sstDic.get(val);
@@ -423,9 +513,10 @@ export class BrowserXlsbWriter {
             this._sstDic.set(val, index);
         }
         this._sstCntAll++;
+        const finalStyle = styleOverride !== undefined ? styleOverride : styleIndex;
         bb.ensureCapacity(17);
         bb.writeUnsafeByte(7); bb.writeUnsafeByte(12);
-        bb.writeUnsafeInt32LE(colNum); bb.writeUnsafeByte(styleIndex);
+        bb.writeUnsafeInt32LE(colNum); bb.writeUnsafeByte(finalStyle);
         bb.writeUnsafeByte(0); bb.writeUnsafeByte(0); bb.writeUnsafeByte(0);
         bb.writeUnsafeInt32LE(index);
     }
@@ -470,7 +561,7 @@ export class BrowserXlsbWriter {
 
     finalize() {
         this._saveSst();
-        this._zip.addFile('xl/styles.bin', this._stylesBin);
+        this._zip.addFile('xl/styles.bin', this._buildStylesBin());
         
         const wbBuffers = [this._workbookBinStart];
         for (const sheet of this._sheetList) {

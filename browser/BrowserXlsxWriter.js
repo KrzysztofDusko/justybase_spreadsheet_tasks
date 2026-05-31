@@ -4,6 +4,7 @@
  */
 import { BrowserBigBuffer } from './BrowserBigBuffer.js';
 import { BrowserZip } from './BrowserZip.js';
+import { isFormattedCell, unwrapCell, getFormat } from './Formats.js';
 
 const COL_LETTERS = (() => {
     const l = []; for (let i=65;i<91;i++) l.push(String.fromCharCode(i));
@@ -19,6 +20,10 @@ export class BrowserXlsxWriter {
         this._oaE = Date.UTC(1899,11,30);
         this._csb = null; this._csrn = 0; this._csSC = 0; this._csEC = 0;
         this._csAF = false; this._isS = false; this._csCL = [];
+        this._fmtReg = new Map();
+        this._fmtXf = new Map();
+        this._nextNfmt = 165;
+        this._nextXf = 6;
     }
     _cl(i) { return i < COL_LETTERS.length ? COL_LETTERS[i] : 'A'; }
     _san(n) {
@@ -40,10 +45,12 @@ export class BrowserXlsxWriter {
         const sn = this._san(name); this._sc++;
         this._sl.push({name:sn, path:`xl/worksheets/sheet${this._sc}.xml`, hidden, fn:`sheet${this._sc}.xml`, id:this._sc, rId:`rId${this._sc}`, fhr:null});
     }
-    _wsc(bb,val,cr,rn) {
+    _wsc(bb,val,cr,rn,so) {
         let idx = this._sstM.get(val);
         if(idx===undefined){idx=this._sstA.length;this._sstA.push(val);this._sstM.set(val,idx);}
-        this._sstCnt++; bb.writeString(`<c r="${cr}${rn}" t="s"><v>${idx}</v></c>`);
+        this._sstCnt++;
+        const sa = so!==undefined ? ` s="${so}"` : '';
+        bb.writeString(`<c r="${cr}${rn}" t="s"${sa}><v>${idx}</v></c>`);
     }
     _wscStyle(bb,val,cr,rn,styleId) {
         let idx = this._sstM.get(val);
@@ -51,13 +58,25 @@ export class BrowserXlsxWriter {
         this._sstCnt++; bb.writeString(`<c r="${cr}${rn}" t="s" s="${styleId}"><v>${idx}</v></c>`);
     }
     _oa(d) { return (d.getTime()-this._oaE)/86400000; }
-    _wcv(bb,v,cr,rn) {
-        if(v===null||v===undefined) return;
-        if(typeof v==='number'){if(Number.isFinite(v)) bb.writeString(`<c r="${cr}${rn}"><v>${v}</v></c>`);else this._wsc(bb,v.toString(),cr,rn);}
-        else if(typeof v==='bigint') this._wsc(bb,v.toString(),cr,rn);
-        else if(typeof v==='boolean') bb.writeString(`<c r="${cr}${rn}" t="b"><v>${v?1:0}</v></c>`);
-        else if(v instanceof Date){const o=this._oa(v);if(Number.isFinite(o)) bb.writeString(`<c r="${cr}${rn}" s="1"><v>${o}</v></c>`);else this._wsc(bb,v.toString(),cr,rn);}
-        else this._wsc(bb,v.toString(),cr,rn);
+    _regFmt(fs) {
+        if (this._fmtXf.has(fs)) return this._fmtXf.get(fs);
+        const nid = this._nextNfmt++;
+        this._fmtReg.set(fs, nid);
+        const xf = this._nextXf++;
+        this._fmtXf.set(fs, xf);
+        return xf;
+    }
+    _wcv(bb,raw,cr,rn) {
+        if(raw===null||raw===undefined) return;
+        const fs = getFormat(raw);
+        const v = fs!==null ? unwrapCell(raw) : raw;
+        const xf = fs!==null ? this._regFmt(fs) : -1;
+        const sa = xf>=0 ? ` s="${xf}"` : '';
+        if(typeof v==='number'){if(Number.isFinite(v)) bb.writeString(`<c r="${cr}${rn}"${sa}><v>${v}</v></c>`);else this._wsc(bb,v.toString(),cr,rn,xf>=0?xf:void 0);}
+        else if(typeof v==='bigint') this._wsc(bb,v.toString(),cr,rn,xf>=0?xf:void 0);
+        else if(typeof v==='boolean') bb.writeString(`<c r="${cr}${rn}" t="b"${sa}><v>${v?1:0}</v></c>`);
+        else if(v instanceof Date){const o=this._oa(v);if(Number.isFinite(o)) bb.writeString(`<c r="${cr}${rn}" s="${xf>=0?xf:1}"><v>${o}</v></c>`);else this._wsc(bb,v.toString(),cr,rn,xf>=0?xf:void 0);}
+        else this._wsc(bb,v.toString(),cr,rn,xf>=0?xf:void 0);
     }
     _sheetHead(bb,cc,isFirst,hasAF) {
         bb.writeString('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>');
@@ -107,7 +126,7 @@ export class BrowserXlsxWriter {
         this._cw=new Array(cc).fill(-1);
         const cl=new Array(cc); for(let i=0;i<cc;i++) cl[i]=this._cl(i);
         if(headers) for(let i=0;i<cc;i++){let w=1.3*(headers[i]?headers[i].length:0)+3;if(w>80)w=80;if(this._cw[i]<w)this._cw[i]=w;}
-        for(let r=0;r<Math.min(rows.length,100);r++) for(let c=0;c<rows[r].length;c++){const v=rows[r][c];if(v==null)continue;let w=1.3*(v instanceof Date?10:v.toString().length)+3;if(w>80)w=80;if(this._cw[c]<w)this._cw[c]=w;}
+        for(let r=0;r<Math.min(rows.length,100);r++) for(let c=0;c<rows[r].length;c++){const raw=rows[r][c];if(raw==null)continue;const v=isFormattedCell(raw)?raw.value:raw;let w=1.3*(v instanceof Date?10:v.toString().length)+3;if(w>80)w=80;if(this._cw[c]<w)this._cw[c]=w;}
         const tr=rows.length+(headers?1:0);
         this._sheetHead(bb,cc,this._sc===1,doAutofilter&&!!headers);
         let rn=0;
@@ -131,10 +150,29 @@ export class BrowserXlsxWriter {
         bb.writeString('</sst>'); this._zip.addFile('xl/sharedStrings.xml',bb.toUint8Array());
     }
     _writeStyles() {
-        // 2 fonts: normal (id=0) and bold (id=1).
+        let nfs = '<numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm:ss"/>';
+        let nfc = 1;
+        const xfe = [
+            '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
+            '<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>',
+            '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>',
+            '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>',
+            '<xf numFmtId="0" fontId="0" fillId="1" borderId="0" xfId="0" applyFill="1"/>',
+            '<xf numFmtId="0" fontId="1" fillId="1" borderId="0" xfId="0" applyFont="1" applyFill="1"/>'
+        ];
+        for (const [fs, nid] of this._fmtReg) {
+            const ef = fs.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+            nfs += `<numFmt numFmtId="${nid}" formatCode="${ef}"/>`;
+            nfc++;
+        }
+        const sf = [...this._fmtXf.entries()].sort((a,b)=>a[1]-b[1]);
+        for (const [fs] of sf) {
+            const nid = this._fmtReg.get(fs);
+            xfe.push(`<xf numFmtId="${nid}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`);
+        }
         this._zip.addFile('xl/styles.xml',`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm:ss"/></numFmts>
+<numFmts count="${nfc}">${nfs}</numFmts>
 <fonts count="2">
 <font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
 <font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
@@ -142,13 +180,8 @@ export class BrowserXlsxWriter {
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="6">
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
-<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
-<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
-<xf numFmtId="0" fontId="0" fillId="1" borderId="0" xfId="0" applyFill="1"/>
-<xf numFmtId="0" fontId="1" fillId="1" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+<cellXfs count="${xfe.length}">
+${xfe.join('\n')}
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 <dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>
