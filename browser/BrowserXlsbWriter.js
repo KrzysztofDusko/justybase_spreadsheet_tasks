@@ -587,7 +587,11 @@ export class BrowserXlsbWriter {
             const filtered = this._sheetList.filter(s => s.filterData);
             if (filtered.length > 0) {
                 wbBuffers.push(this._magicFilterExcel2016Fix0);
-                wbBuffers.push(new Uint8Array([0x10 + (filtered.length - 1) * 0x0C, filtered.length, 0, 0, 0]));
+                const cnt = filtered.length;
+                const firstByte = cnt <= 20 ? 0x10 + (cnt - 1) * 0x0C : 0x80 + (cnt - 21) * 0x0C;
+                wbBuffers.push(cnt <= 10
+                    ? new Uint8Array([firstByte, cnt, 0, 0, 0])
+                    : new Uint8Array([firstByte, Math.floor((cnt - 1) / 10), cnt, 0, 0, 0]));
                 for (let i = 0; i < filtered.length; i++) {
                     const si = filtered[i].sheetId - 1;
                     const ib = new Uint8Array(12); ib[4] = si; ib[8] = si; wbBuffers.push(ib);

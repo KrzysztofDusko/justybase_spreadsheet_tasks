@@ -354,8 +354,8 @@ export class XlsbWriter {
         fmtHeader.writeUInt16LE(totalFmt, 0);
         parts.push(XlsbWriter._buildBrtRecord(0x0267, fmtHeader));
 
-        // 3. BrtNumFmt records: 2 base + custom
-        parts.push(XlsbWriter._buildStFmtRecord(164, 'yyyy\\-mm\\-dd\\ hh:mm:ss'));
+        // 3. BrtNumFmt records: 2 base + custom (ALWAYS add base formats)
+        parts.push(XlsbWriter._buildStFmtRecord(164, 'yyyy\\-mm\\-dd\\ hh:mm'));
         parts.push(XlsbWriter._buildStFmtRecord(166, 'yyyy\\-mm\\-dd'));
         for (const [fmtString, st] of this._stFmtRecords) {
             parts.push(XlsbWriter._buildStFmtRecord(st.numfmtId, fmtString));
@@ -461,8 +461,8 @@ export class XlsbWriter {
 
         bigBuf.write(sheetHeader.subarray(0, 84));
 
-        // Write sticky header if autofilter is on
-        if (this.currentSheetDoAutofilter) {
+        // Write sticky header if headers are present
+        if (headers) {
             bigBuf.write(this._stickHeaderA1bytes);
         }
 
@@ -675,7 +675,7 @@ export class XlsbWriter {
 
         bigBuf.write(sheetHeader.subarray(0, 84));
 
-        if (doAutofilter && headers) {
+        if (headers) {
             bigBuf.write(this._stickHeaderA1bytes);
         }
 
@@ -993,8 +993,12 @@ export class XlsbWriter {
                     if (cnt > 0) {
                         wbBuffers.push(this._magicFilterExcel2016Fix0);
 
-                        const firstByte = 0x10 + (cnt - 1) * 0x0C;
-                        const countBuf = Buffer.from([firstByte, cnt, 0x00, 0x00, 0x00]);
+                        const firstByte = cnt <= 20
+                            ? 0x10 + (cnt - 1) * 0x0C
+                            : 0x80 + (cnt - 21) * 0x0C;
+                        const countBuf = cnt <= 10
+                            ? Buffer.from([firstByte, cnt, 0x00, 0x00, 0x00])
+                             : Buffer.from([firstByte, Math.floor((cnt - 1) / 10), cnt, 0x00, 0x00, 0x00]);
                         wbBuffers.push(countBuf);
 
                         for (let nm = 0; nm < cnt; nm++) {

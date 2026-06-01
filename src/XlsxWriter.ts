@@ -49,7 +49,7 @@ export class XlsxWriter {
     private _formatRegistry: Map<string, number> = new Map();
     private _formatXfMap: Map<string, number> = new Map();
     private _nextNumfmtId: number = 165;
-    private _nextXfIndex: number = 3;
+    private _nextXfIndex: number = 4;
 
     // Streaming state
     private currentSheetBuffer: BigBuffer | null = null;
@@ -196,7 +196,7 @@ export class XlsxWriter {
         bigBuf.writeString('<dimension ref="A1"/>');
 
         const isFirstSheet = this.sheetCount === 1;
-        if (this.currentSheetDoAutofilter) {
+        if (headers) {
             if (isFirstSheet) {
                 bigBuf.writeString('<sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen" /><selection pane="bottomLeft" /></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>');
             } else {
@@ -221,7 +221,7 @@ export class XlsxWriter {
             this.currentSheetRowNum++;
             bigBuf.writeString(`<row r="${this.currentSheetRowNum}">`);
             for (let c = 0; c < headers.length; c++) {
-                this._writeStringCell(bigBuf, headers[c], colLetters[c], this.currentSheetRowNum);
+                this._writeStringCell(bigBuf, headers[c], colLetters[c], this.currentSheetRowNum, 3);
             }
             bigBuf.writeString('</row>');
         }
@@ -361,7 +361,7 @@ export class XlsxWriter {
         }
 
         const isFirstSheet = this.sheetCount === 1;
-        if (doAutofilter && headers) {
+        if (headers) {
             if (isFirstSheet) {
                 bigBuf.writeString('<sheetViews><sheetView tabSelected="1" workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen" /><selection pane="bottomLeft" /></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>');
             } else {
@@ -388,7 +388,7 @@ export class XlsxWriter {
             rowNum++;
             bigBuf.writeString(`<row r="${rowNum}">`);
             for (let c = 0; c < headers.length; c++) {
-                this._writeStringCell(bigBuf, headers[c], colLetters[c], rowNum);
+                this._writeStringCell(bigBuf, headers[c], colLetters[c], rowNum, 3);
             }
             bigBuf.writeString('</row>');
         }
@@ -526,13 +526,13 @@ export class XlsxWriter {
 
     private _writeStyles(): void {
         let numFmts = '';
-        let numFmtCount = 1;
-        numFmts += '<numFmt numFmtId="164" formatCode="yyyy\\-mm\\-dd\\ hh:mm:ss"/>';
+        let numFmtCount = 0;
 
         const xfEntries: string[] = [];
         xfEntries.push('<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>');
         xfEntries.push('<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>');
-        xfEntries.push('<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>');
+        xfEntries.push('<xf numFmtId="22" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>');
+        xfEntries.push('<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>');
 
         for (const [fmtString, numfmtId] of this._formatRegistry) {
             const escapedFmt = fmtString
@@ -552,14 +552,14 @@ export class XlsxWriter {
         }
 
         const totalXf = xfEntries.length;
+        const numFmtsSection = numFmtCount > 0 ? `<numFmts count="${numFmtCount}">${numFmts}</numFmts>` : '';
 
         const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<numFmts count="${numFmtCount}">
-${numFmts}
-</numFmts>
-<fonts count="1">
+${numFmtsSection}
+<fonts count="2">
 <font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
+<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
 </fonts>
 <fills count="2">
 <fill><patternFill patternType="none"/></fill>

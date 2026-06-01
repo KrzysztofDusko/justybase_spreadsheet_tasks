@@ -1,6 +1,6 @@
 {
   "name": "@justybase/spreadsheet-tasks",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "High-performance TypeScript library for reading and writing Excel files in XLSB and XLSX formats. XLSB is 3.3x faster to write and 2.1x faster to read than XLSX.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

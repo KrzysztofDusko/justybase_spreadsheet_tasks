@@ -46,8 +46,15 @@
         <button id="btnFmtXlsb" class="xlsb">Download Formatted XLSB</button>
     </div>
 
+    <div class="btn-group">
+        <h3>Data Formats — all 15 sheets</h3>
+        <p style="font-size: 13px; color: #666; margin: 4px 0 8px 0;">Generates a full set of 15 sheets with diverse data types and formats (currencies, percentages, dates, scientific notation, boolean, null).</p>
+        <button id="btnAllXlsx">Download data_formats.xlsx</button>
+        <button id="btnAllXlsb" class="xlsb">Download data_formats.xlsb</button>
+    </div>
+
     <script type="module">
-        import { downloadXlsx, downloadXlsb, downloadXlsxMultiSheet, downloadXlsbMultiSheet } from './browser-spreadsheet.js';
+        import { BrowserXlsxWriter, BrowserXlsbWriter, downloadXlsx, downloadXlsb, downloadXlsxMultiSheet, downloadXlsbMultiSheet } from './browser-spreadsheet.js';
         import { F } from './Formats.js';
 
         const simpleHeaders = ['Name', 'Age', 'City', 'Score', 'Active'];
@@ -119,6 +126,159 @@
 
         document.getElementById('btnFmtXlsx').onclick = () => downloadXlsx('formats_demo.xlsx', fmtRows, fmtHeaders);
         document.getElementById('btnFmtXlsb').onclick = () => downloadXlsb('formats_demo.xlsb', fmtRows, fmtHeaders);
+
+        function triggerDownload(blob, fileName) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = fileName;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+        }
+
+        function buildAllSheets(writer) {
+            const total = 450000 + 320000 + 180000;
+            // 1
+            writer.addSheet('Basic Types');
+            writer.writeSheet([
+                [42, 3.14159, 'Hello World', new Date(2025, 5, 1), true, null],
+                [100, 0.99, 'Test XII', new Date(2025, 11, 24), false],
+            ], ['Integer', 'Floating Point', 'Text', 'Date', 'Boolean', 'Empty']);
+            // 2
+            writer.addSheet('Finances');
+            writer.writeSheet([
+                ['Deposit', { value: 15000.0, format: F.CURRENCY_PLN }, null, null, { value: 0.15, format: F.PERCENTAGE }],
+                ['Rent', null, { value: 3200.5, format: F.CURRENCY_PLN }, null, null],
+                ['Shopping', null, { value: 1240.99, format: F.CURRENCY_PLN }, null, null],
+            ], ['Description', 'Income', 'Expense', 'Balance', 'Percent']);
+            // 3
+            writer.addSheet('Dates and Time');
+            writer.writeSheet([
+                [{ value: new Date(2025, 0, 1), format: F.DATE_ISO }, '08:00:00', { value: new Date(2025, 0, 1, 8, 0), format: F.DATETIME_ISO }, 'Wednesday'],
+                [{ value: new Date(2025, 5, 15), format: F.DATE_ISO }, '14:30:00', { value: new Date(2025, 5, 15, 14, 30), format: F.DATETIME_ISO }, 'Sunday'],
+                [{ value: new Date(2025, 11, 25), format: F.DATE_ISO }, '23:59:59', { value: new Date(2025, 11, 25, 23, 59, 59), format: F.DATETIME_ISO }, 'Thursday'],
+            ], ['Date', 'Time', 'Date and Time', 'Weekday']);
+            // 4
+            writer.addSheet('Scientific');
+            writer.writeSheet([
+                ['Planck Constant', { value: 6.62607015e-34, format: F.SCIENTIFIC }, '6.626×10⁻³⁴', 'J·s'],
+                ['Speed of Light', { value: 299792458, format: F.THOUSANDS_SEP }, '2.998×10⁸', 'm/s'],
+                ['Gravitational Constant', { value: 6.6743e-11, format: F.SCIENTIFIC }, '6.674×10⁻¹¹', 'm³·kg⁻¹·s⁻²'],
+                ['Avogadro Number', { value: 6.02214076e23, format: F.SCIENTIFIC }, '6.022×10²³', 'mol⁻¹'],
+            ], ['Parameter', 'Value', 'Notation', 'Unit']);
+            // 5
+            writer.addSheet('Geographic');
+            writer.writeSheet([
+                ['Warsaw', 'Poland', 52.2297, 21.0122, 'UTC+1', 1.79],
+                ['Krakow', 'Poland', 50.0647, 19.945, 'UTC+1', 0.77],
+                ['Gdansk', 'Poland', 54.352, 18.6466, 'UTC+1', 0.47],
+                ['Wroclaw', 'Poland', 51.1079, 17.0385, 'UTC+1', 0.64],
+                ['Poznan', 'Poland', 52.4064, 16.9252, 'UTC+1', 0.54],
+            ], ['City', 'Country', 'Latitude', 'Longitude', 'Zone', 'Population (mln)']);
+            // 6
+            writer.addSheet('Warehouse');
+            writer.writeSheet([
+                ['P-001', 'Dell Laptop', 'Electronics', { value: 4500, format: F.CURRENCY_PLN }, '23%', 15],
+                ['P-002', 'LG Monitor', 'Electronics', { value: 1200, format: F.CURRENCY_PLN }, '23%', 30],
+                ['P-003', 'Keyboard', 'Accessories', { value: 89.99, format: F.CURRENCY_PLN }, '23%', 120],
+                ['P-004', 'Logitech Mouse', 'Accessories', { value: 149.99, format: F.CURRENCY_PLN }, '23%', 85],
+                ['P-005', 'Desk', 'Furniture', { value: 890, format: F.CURRENCY_PLN }, '8%', 10],
+            ], ['ID', 'Name', 'Category', 'Net Price', 'VAT', 'Stock']);
+            // 7
+            writer.addSheet('Grades');
+            writer.writeSheet([
+                ['Anna Nowak', 5, 4, 6, 5, 5],
+                ['Jan Kowalski', 4, 3, 5, 4, 4],
+                ['Kasia Wisniewska', 6, 5, 6, 5, 6],
+                ['Tomasz Lewandowski', 3, 4, 4, 3, 4],
+                ['Marta Zielinska', 5, 5, 5, 6, 5],
+            ], ['Student', 'Math', 'Physics', 'Computer Science', 'Polish', 'English']);
+            // 8
+            writer.addSheet('Various Types');
+            writer.writeSheet([
+                ['Integer', 1, 2, 3, 'integers'],
+                ['Float', 0.1, 0.01, 0.001, 'floating point numbers'],
+                ['String', 'Ala', 'ma', 'kota', 'strings'],
+                ['Date', new Date(2025, 0, 1), new Date(2025, 5, 1), new Date(2025, 11, 31), 'dates'],
+                ['Boolean', true, false, true, 'booleans'],
+                ['Null', null, null, null, 'empty cells'],
+            ], ['Type', 'Value 1', 'Value 2', 'Value 3', 'Description']);
+            // 9
+            writer.addSheet('Employees');
+            writer.writeSheet([
+                [1, 'Adam', 'Mickiewicz', 'IT', 'Developer', new Date(2020, 2, 1), { value: 12000, format: F.CURRENCY_PLN }],
+                [2, 'Maria', 'Sklodowska', 'R&D', 'Scientist', new Date(2019, 6, 15), { value: 15000, format: F.CURRENCY_PLN }],
+                [3, 'Mikolaj', 'Kopernik', 'R&D', 'Astronomer', new Date(2018, 0, 1), { value: 18000, format: F.CURRENCY_PLN }],
+                [4, 'Fryderyk', 'Chopin', 'HR', 'Specialist', new Date(2021, 10, 1), { value: 9000, format: F.CURRENCY_PLN }],
+                [5, 'Wislawa', 'Szymborska', 'Marketing', 'Creative', new Date(2022, 4, 1), { value: 11000, format: F.CURRENCY_PLN }],
+            ], ['ID', 'First Name', 'Last Name', 'Department', 'Position', 'Hire Date', 'Salary']);
+            // 10
+            writer.addSheet('Sales');
+            writer.writeSheet([
+                ['Q1 2025', 45000, 32000, 28000, 120000],
+                ['Q2 2025', 52000, 38000, 31000, 120000],
+                ['Q3 2025', 48000, 35000, 29000, 120000],
+                ['Q4 2025', 61000, 42000, 35000, 120000],
+            ], ['Quarter', 'Product A', 'Product B', 'Product C', 'Target']);
+            // 11
+            writer.addSheet('Template');
+            const tpl = [];
+            for (let i = 1; i <= 10; i++) tpl.push([i, '', 0, 0.0]);
+            writer.writeSheet(tpl, ['No.', 'Name', 'Quantity', 'Price']);
+            // 12
+            writer.addSheet('Notes');
+            writer.writeSheet([
+                [1, 'Important Meeting', 'Meeting with client regarding new project. Discuss requirements and timeline.', 'AD', new Date(2025, 5, 1), 'High'],
+                [2, 'Coding', 'Implement data export module for XLSX and XLSB formats. Unit tests required.', 'JK', new Date(2025, 5, 2), 'Medium'],
+                [3, 'Critical Bug', 'Exception occurred when parsing large CSV files. Parser needs optimization.', 'AN', new Date(2025, 5, 3), 'Critical'],
+                [4, 'Deployment', 'Prepare production environment. Server and database configuration.', 'ML', new Date(2025, 5, 4), 'Low'],
+            ], ['ID', 'Title', 'Content', 'Author', 'Date', 'Priority']);
+            // 13
+            writer.addSheet('Percentages');
+            writer.writeSheet([
+                ['Online Sales', 450000, { value: 450000 / total, format: F.PERCENTAGE }],
+                ['Retail Sales', 320000, { value: 320000 / total, format: F.PERCENTAGE }],
+                ['Export', 180000, { value: 180000 / total, format: F.PERCENTAGE }],
+            ], ['Category', 'Value', 'Share %']);
+            // 14
+            writer.addSheet('Flags');
+            writer.writeSheet([
+                [1, 'user1', true, false, false],
+                [2, 'user2', true, false, true],
+                [3, 'user3', false, false, false],
+                [4, 'admin1', true, true, false],
+                [5, 'mod1', true, false, true],
+            ], ['ID', 'Username', 'Active', 'Admin', 'Blocked']);
+            // 15
+            writer.addSheet('Table of Contents');
+            writer.writeSheet([
+                [1, 'Basic Types', 'int, float, string, date, bool, null', 2, 6],
+                [2, 'Finances', 'currencies and percentages via F.CURRENCY_PLN / F.PERCENTAGE', 3, 5],
+                [3, 'Dates and Time', 'date, time, datetime ISO', 3, 4],
+                [4, 'Scientific', 'scientific notation F.SCIENTIFIC', 4, 4],
+                [5, 'Geographic', 'city coordinates', 5, 6],
+                [6, 'Warehouse', 'prices F.CURRENCY_PLN, stock levels', 5, 6],
+                [7, 'Grades', 'school grades 1-6', 5, 6],
+                [8, 'Various Types', 'mix: int, float, string, date, bool, null', 6, 5],
+                [9, 'Employees', 'personal data, dates, salaries F.CURRENCY_PLN', 5, 7],
+                [10, 'Sales', 'quarterly sales', 4, 5],
+                [11, 'Template', 'empty template 10 rows', 10, 4],
+                [12, 'Notes', 'long texts, dates, priorities', 4, 6],
+                [13, 'Percentages', 'percentage shares F.PERCENTAGE', 3, 3],
+                [14, 'Flags', 'boolean flags', 5, 5],
+                [15, 'Table of Contents', 'this sheet', 15, 5],
+            ], ['No.', 'Sheet Name', 'Description', 'Rows', 'Columns']);
+        }
+
+        document.getElementById('btnAllXlsx').onclick = () => {
+            const w = new BrowserXlsxWriter();
+            buildAllSheets(w);
+            triggerDownload(w.finalize(), 'data_formats.xlsx');
+        };
+        document.getElementById('btnAllXlsb').onclick = () => {
+            const w = new BrowserXlsbWriter();
+            buildAllSheets(w);
+            triggerDownload(w.finalize(), 'data_formats.xlsb');
+        };
     </script>
 </body>
 </html>

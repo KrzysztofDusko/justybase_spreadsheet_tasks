@@ -161,6 +161,48 @@
                     log("Formatted XLSX returned empty blob.", true);
                 }
 
+                // 15-sheet autofilter test (regression: countBuf bug for >10 filters)
+                log("Testing 15-sheet autofilter (XLSB)...");
+                const multiXlsb = new BrowserXlsbWriter();
+                const multiHeaders = ['A','B','C','D','E','F','G','H','I','J','K']; // 11 columns
+                for (let i = 1; i <= 15; i++) {
+                    multiXlsb.addSheet(`Sheet${i}`);
+                    const rows = [];
+                    for (let r = 0; r < 5; r++) {
+                        const row = [];
+                        for (let c = 0; c < multiHeaders.length; c++) row.push(`r${r}c${c}`);
+                        rows.push(row);
+                    }
+                    multiXlsb.writeSheet(rows, multiHeaders, true);
+                }
+                const multiXlsbBlob = multiXlsb.finalize();
+                if (multiXlsbBlob && multiXlsbBlob.size > 0) {
+                    log(`15-sheet XLSB blob generated (${multiXlsbBlob.size} bytes).`, false, true);
+                    generatedBlobs['multi_15_filter.xlsb'] = multiXlsbBlob;
+                } else {
+                    log("15-sheet XLSB returned empty blob.", true);
+                }
+
+                log("Testing 15-sheet autofilter (XLSX)...");
+                const multiXlsx = new BrowserXlsxWriter();
+                for (let i = 1; i <= 15; i++) {
+                    multiXlsx.addSheet(`Sheet${i}`);
+                    const rows = [];
+                    for (let r = 0; r < 5; r++) {
+                        const row = [];
+                        for (let c = 0; c < multiHeaders.length; c++) row.push(`r${r}c${c}`);
+                        rows.push(row);
+                    }
+                    multiXlsx.writeSheet(rows, multiHeaders, true);
+                }
+                const multiXlsxBlob = multiXlsx.finalize();
+                if (multiXlsxBlob && multiXlsxBlob.size > 0) {
+                    log(`15-sheet XLSX blob generated (${multiXlsxBlob.size} bytes).`, false, true);
+                    generatedBlobs['multi_15_filter.xlsx'] = multiXlsxBlob;
+                } else {
+                    log("15-sheet XLSX returned empty blob.", true);
+                }
+
                 log("All tests completed without throwing errors!", false, true);
                 btnDownload.style.display = 'block';
 
