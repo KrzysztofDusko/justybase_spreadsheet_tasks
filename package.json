@@ -23,6 +23,7 @@
     "test:xlsx": "npm run build && npx ts-node tests/integration/xlsx-writer.test.ts",
     "benchmark": "npm run build && npx ts-node benchmarks/performance.bench.ts",
     "benchmark:comparison": "npm run build && npx ts-node benchmarks/comparison.bench.ts",
+    "test:excel-compat": "npm run build && npx tsx tests/excel-compat/run.ts",
     "prepublishOnly": "npm run build && npm test"
   },
   "keywords": [
