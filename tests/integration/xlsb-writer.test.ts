@@ -542,6 +542,87 @@ async function testMixedTypesInColumn(): Promise<void> {
     assertEqual(dataRows.length, data.length, 'Mixed types row count');
 }
 
+async function testDateColumnWidth(): Promise<void> {
+    console.log('\n--- Date Column Width Test ---\n');
+
+    // Test 1: Batch mode (writeSheet) - verify datetime survives round-trip
+    const batchFilePath = path.join(outputDir, 'date_width_batch.xlsb');
+    const batchData = [
+        [new Date('2024-06-15T10:30:00'), 'datetime value'],
+        [new Date('2024-01-01'), 'date only'],
+    ];
+
+    const batchWriter = new XlsbWriter(batchFilePath);
+    batchWriter.addSheet('DateWidthBatch');
+    batchWriter.writeSheet(batchData, ['DateTime', 'Description'], false);
+    await batchWriter.finalize();
+
+    assert(fs.existsSync(batchFilePath), 'Batch date width file created');
+
+    // Read back and verify data integrity
+    const batchReader = new XlsbReader();
+    await batchReader.open(batchFilePath);
+    const batchRows: any[][] = [];
+    while (batchReader.read()) {
+        batchRows.push([batchReader.getValue(0), batchReader.getValue(1)]);
+    }
+    await batchReader.close();
+
+    assertEqual(batchRows.length, 3, 'Batch date width row count (header + 2 data)');
+    assert(batchRows[1][0] instanceof Date, 'Batch DateTime column value is Date');
+    assert(batchRows[2][0] instanceof Date, 'Batch date-only column value is Date');
+
+    // Verify datetime values are within 1 day tolerance
+    const dt1 = batchRows[1][0] as Date;
+    const dt2 = batchRows[2][0] as Date;
+    assert(Math.abs(dt1.getTime() - new Date('2024-06-15T10:30:00').getTime()) < 86400000,
+        'Batch datetime value preserved');
+    assert(Math.abs(dt2.getTime() - new Date('2024-01-01').getTime()) < 86400000,
+        'Batch date-only value preserved');
+
+    // Test 2: Streaming mode with sampleRows (startSheet)
+    const streamFilePath = path.join(outputDir, 'date_width_stream.xlsb');
+    const streamSampleRows = [
+        [new Date('2024-06-15T10:30:00'), 'datetime value'],
+        [new Date('2024-01-01'), 'date only'],
+    ];
+
+    const streamWriter = new XlsbWriter(streamFilePath);
+    streamWriter.startSheet('DateWidthStream', 2, ['DateTime', 'Description'], {
+        sampleRows: streamSampleRows
+    });
+    for (const row of streamSampleRows) {
+        streamWriter.writeRow(row);
+    }
+    streamWriter.endSheet();
+    await streamWriter.finalize();
+
+    assert(fs.existsSync(streamFilePath), 'Stream date width file created');
+
+    // Read back and verify
+    const streamReader = new XlsbReader();
+    await streamReader.open(streamFilePath);
+    const streamRows: any[][] = [];
+    while (streamReader.read()) {
+        streamRows.push([streamReader.getValue(0), streamReader.getValue(1)]);
+    }
+    await streamReader.close();
+
+    assertEqual(streamRows.length, 3, 'Stream date width row count (header + 2 data)');
+    assert(streamRows[1][0] instanceof Date, 'Stream DateTime column value is Date');
+    assert(streamRows[2][0] instanceof Date, 'Stream date-only column value is Date');
+
+    // Test 3: Streaming mode without sampleRows should still work (backward compat)
+    const noSampleFilePath = path.join(outputDir, 'date_width_no_sample.xlsb');
+    const noSampleWriter = new XlsbWriter(noSampleFilePath);
+    noSampleWriter.startSheet('NoSample', 2, ['DateTime', 'Description'], {});
+    noSampleWriter.writeRow([new Date('2024-06-15T10:30:00'), 'datetime value']);
+    noSampleWriter.endSheet();
+    await noSampleWriter.finalize();
+
+    assert(fs.existsSync(noSampleFilePath), 'No sampleRows file created (backward compat)');
+}
+
 async function runXlsbWriterTests(): Promise<void> {
     console.log('='.repeat(60));
     console.log('XLSB Writer Integration Tests');
@@ -572,6 +653,9 @@ async function runXlsbWriterTests(): Promise<void> {
         // Special cases
         await testSharedStringsDeduplication();
         await testMixedTypesInColumn();
+
+        // Datetime column widths
+        await testDateColumnWidth();
     } catch (err) {
         console.error('Test error:', err);
     }

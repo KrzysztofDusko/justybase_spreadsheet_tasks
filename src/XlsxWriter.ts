@@ -153,13 +153,13 @@ export class XlsxWriter {
         sheetName: string,
         columnCount: number,
         headers?: string[],
-        options: { hidden?: boolean; doAutofilter?: boolean } = {}
+        options: { hidden?: boolean; doAutofilter?: boolean; sampleRows?: unknown[][] } = {}
     ): void {
         if (this.isStreaming) {
             throw new Error('Already in streaming mode. Call endSheet() first.');
         }
 
-        const { hidden = false, doAutofilter = true } = options;
+        const { hidden = false, doAutofilter = true, sampleRows } = options;
 
         this.addSheet(sheetName, hidden);
 
@@ -182,10 +182,25 @@ export class XlsxWriter {
 
         if (headers) {
             for (let i = 0; i < columnCount; i++) {
-                const len = headers[i] ? headers[i].length : 0;
+                const len = headers[i] ? headers[i].length + 1 : 0;
                 let width = 1.25 * len + 2;
                 if (width > 80) width = 80;
                 if (this.colWidths[i] < width) this.colWidths[i] = width;
+            }
+        }
+
+        if (sampleRows) {
+            for (let r = 0; r < Math.min(sampleRows.length, 100); r++) {
+                const row = sampleRows[r];
+                for (let c = 0; c < row.length; c++) {
+                    const raw = row[c];
+                    if (raw === null || raw === undefined) continue;
+                    const val = isFormattedCell(raw) ? raw.value : raw;
+                const len = val instanceof Date ? 20 : val.toString().length + 1;
+                let width = 1.25 * len + 2;
+                if (width > 80) width = 80;
+                if (this.colWidths[c] < width) this.colWidths[c] = width;
+                }
             }
         }
 
@@ -330,7 +345,7 @@ export class XlsxWriter {
 
         if (headers) {
             for (let i = 0; i < columnCount; i++) {
-                const len = headers[i] ? headers[i].length : 0;
+                const len = headers[i] ? headers[i].length + 1 : 0;
                 let width = 1.25 * len + 2;
                 if (width > 80) width = 80;
                 if (this.colWidths[i] < width) this.colWidths[i] = width;
@@ -343,10 +358,10 @@ export class XlsxWriter {
                 const raw = row[c];
                 if (raw === null || raw === undefined) continue;
                 const val = isFormattedCell(raw) ? raw.value : raw;
-                const len = val instanceof Date ? 10 : val.toString().length;
-                let width = 1.25 * len + 2;
-                if (width > 80) width = 80;
-                if (this.colWidths[c] < width) this.colWidths[c] = width;
+                    const len = val instanceof Date ? 20 : val.toString().length + 1;
+                    let width = 1.25 * len + 2;
+                    if (width > 80) width = 80;
+                    if (this.colWidths[c] < width) this.colWidths[c] = width;
             }
         }
 
@@ -477,6 +492,10 @@ export class XlsxWriter {
     private _toOADate(date: Date): number {
         // Use UTC time to avoid timezone conversion issues
         return (date.getTime() - this._oaEpoch) / 86400000;
+    }
+
+    private _getDateWidth(_date: Date): number {
+        return 19; // "YYYY-MM-DD HH:MM:SS" ≈ 19 chars
     }
 
     finalize(): Promise<void> {

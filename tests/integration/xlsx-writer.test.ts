@@ -593,6 +593,90 @@ async function testXmlEscaping(): Promise<void> {
     await reader.close();
 }
 
+async function testDateColumnWidth(): Promise<void> {
+    console.log('\n--- Date Column Width Test ---\n');
+
+    // Test 1: Batch mode (writeSheet)
+    const batchFilePath = path.join(outputDir, 'date_width_batch.xlsx');
+    const batchData = [
+        [new Date('2024-06-15T10:30:00'), 'datetime value'],
+        [new Date('2024-01-01'), 'date only'],
+    ];
+
+    const batchWriter = new XlsxWriter(batchFilePath);
+    batchWriter.addSheet('DateWidthBatch');
+    batchWriter.writeSheet(batchData, ['DateTime', 'Description'], false);
+    await batchWriter.finalize();
+
+    assert(fs.existsSync(batchFilePath), 'Batch date width file created');
+
+    // Read the raw XML to check column widths
+    const batchSheetXml = getZipEntryText(batchFilePath, 'xl/worksheets/sheet1.xml');
+    assert(batchSheetXml !== null, 'Batch date width sheet XML exists');
+
+    if (batchSheetXml) {
+        // Parse <col> elements - look for width values
+        const colMatches = batchSheetXml.match(/<col[^>]*width="([^"]*)"[^>]*\/>/g);
+        assert(colMatches !== null, 'Batch date width has col elements');
+
+        if (colMatches) {
+            // Column 1 is DateTime, should have width >= 16 (datetime is 19 chars → ~25.75)
+            const col1Match = colMatches[0].match(/width="([^"]*)"/);
+            assert(col1Match !== null, 'Batch DateTime column has width');
+            if (col1Match) {
+                const col1Width = parseFloat(col1Match[1]);
+                assert(col1Width >= 16, `Batch DateTime column width >= 16, got ${col1Width}`);
+            }
+        }
+    }
+
+    // Test 2: Streaming mode with sampleRows (startSheet)
+    const streamFilePath = path.join(outputDir, 'date_width_stream.xlsx');
+    const streamSampleRows = [
+        [new Date('2024-06-15T10:30:00'), 'datetime value'],
+        [new Date('2024-01-01'), 'date only'],
+    ];
+
+    const streamWriter = new XlsxWriter(streamFilePath);
+    streamWriter.startSheet('DateWidthStream', 2, ['DateTime', 'Description'], {
+        sampleRows: streamSampleRows
+    });
+    for (const row of streamSampleRows) {
+        streamWriter.writeRow(row);
+    }
+    streamWriter.endSheet();
+    await streamWriter.finalize();
+
+    assert(fs.existsSync(streamFilePath), 'Stream date width file created');
+
+    const streamSheetXml = getZipEntryText(streamFilePath, 'xl/worksheets/sheet1.xml');
+    assert(streamSheetXml !== null, 'Stream date width sheet XML exists');
+
+    if (streamSheetXml) {
+        const colMatches = streamSheetXml.match(/<col[^>]*width="([^"]*)"[^>]*\/>/g);
+        assert(colMatches !== null, 'Stream date width has col elements');
+
+        if (colMatches) {
+            const col1Match = colMatches[0].match(/width="([^"]*)"/);
+            assert(col1Match !== null, 'Stream DateTime column has width');
+            if (col1Match) {
+                const col1Width = parseFloat(col1Match[1]);
+                assert(col1Width >= 16, `Stream DateTime column width >= 16, got ${col1Width}`);
+            }
+        }
+    }
+
+    // Test 3: Streaming mode without sampleRows should still work (backward compat)
+    const noSampleFilePath = path.join(outputDir, 'date_width_no_sample.xlsx');
+    const noSampleWriter = new XlsxWriter(noSampleFilePath);
+    noSampleWriter.startSheet('NoSample', 2, ['DateTime', 'Description'], {});
+    noSampleWriter.writeRow([new Date('2024-06-15T10:30:00'), 'datetime value']);
+    noSampleWriter.endSheet();
+    await noSampleWriter.finalize();
+
+    assert(fs.existsSync(noSampleFilePath), 'No sampleRows file created (backward compat)');
+}
+
 async function runXlsxWriterTests(): Promise<void> {
     console.log('='.repeat(60));
     console.log('XLSX Writer Integration Tests');
@@ -623,6 +707,9 @@ async function runXlsxWriterTests(): Promise<void> {
         await testSharedStringsDeduplication();
         await testMixedTypesInColumn();
         await testXmlEscaping();
+
+        // Datetime column widths
+        await testDateColumnWidth();
     } catch (err) {
         console.error('Test error:', err);
     }
