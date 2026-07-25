@@ -370,7 +370,7 @@ export class BrowserXlsbWriter {
         const headerStyle = options.headerStyle || 'bold';
         let hs = 3; if (headerStyle === 'fill') hs = 4; else if (headerStyle === 'bold+fill') hs = 5;
         const bb = new BrowserBigBuffer();
-        let colCount = rows.length > 0 ? rows[0].length : (headers ? headers.length : 0);
+        const colCount = rows.length > 0 ? rows[0].length : (headers ? headers.length : 0);
         this._colWidths = new Array(colCount).fill(-1.0);
         
         if (headers) {

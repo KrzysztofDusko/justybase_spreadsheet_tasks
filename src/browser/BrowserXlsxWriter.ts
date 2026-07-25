@@ -37,7 +37,14 @@ export class BrowserXlsxWriter {
         let need=false;
         for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);if(c===38||c===60||c===62||c===34||c===39||(c>=0&&c<=8)||c===11||c===12||(c>=14&&c<=31)){need=true;break;}}
         if(!need) return s;
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'');
+        const escaped = s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+        let out = '';
+        for (let i = 0; i < escaped.length; i++) {
+            const c = escaped.charCodeAt(i);
+            if (c <= 8 || c === 11 || c === 12 || (c >= 14 && c <= 31)) continue;
+            out += escaped[i];
+        }
+        return out;
     }
     _fmn(n) { return /[\s\-+=()!@#$%^&]/.test(n)||/^[0-9]/.test(n)?`'${n.replace(/'/g,"''")}'`:n; }
 
@@ -122,7 +129,7 @@ export class BrowserXlsxWriter {
         const headerStyle = options.headerStyle || 'bold';
         let hs=3; if(headerStyle==='fill') hs=4; else if(headerStyle==='bold+fill') hs=5;
         const bb=new BrowserBigBuffer();
-        let cc=rows.length>0?rows[0].length:(headers?headers.length:0);
+        const cc=rows.length>0?rows[0].length:(headers?headers.length:0);
         this._cw=new Array(cc).fill(-1);
         const cl=new Array(cc); for(let i=0;i<cc;i++) cl[i]=this._cl(i);
         if(headers) for(let i=0;i<cc;i++){let w=1.3*(headers[i]?headers[i].length:0)+3;if(w>80)w=80;if(this._cw[i]<w)this._cw[i]=w;}

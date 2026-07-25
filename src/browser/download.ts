@@ -4,7 +4,7 @@
  */
 import { BrowserXlsxWriter } from './BrowserXlsxWriter';
 import { BrowserXlsbWriter } from './BrowserXlsbWriter';
-import { CellValue, F } from '../Formats';
+import { CellValue } from '../Formats';
 
 export { BrowserXlsxWriter } from './BrowserXlsxWriter';
 export { BrowserXlsbWriter } from './BrowserXlsbWriter';
