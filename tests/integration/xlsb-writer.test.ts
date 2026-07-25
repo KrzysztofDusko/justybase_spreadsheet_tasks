@@ -2,8 +2,8 @@
  * XLSB Writer Integration Tests
  */
 
-import { XlsbWriter } from '../../dist/XlsbWriter';
-import { XlsbReader } from '../../dist/XlsbReader';
+import { XlsbWriter } from '../../src/XlsbWriter';
+import { XlsbReader } from '../../src/XlsbReader';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -78,7 +78,7 @@ async function testIntegerValues(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -118,7 +118,7 @@ async function testFloatValues(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -171,7 +171,7 @@ async function testStringValues(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -208,7 +208,7 @@ async function testBooleanValues(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -245,7 +245,7 @@ async function testDateValues(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -288,7 +288,7 @@ async function testNullUndefinedValues(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -386,7 +386,7 @@ async function testEmptySheet(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -429,7 +429,7 @@ async function testLargeDataset(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row: any[] = [];
         for (let i = 0; i < reader.fieldCount; i++) {
             row.push(reader.getValue(i));
@@ -460,7 +460,7 @@ async function testManyColumns(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row: any[] = [];
         for (let i = 0; i < reader.fieldCount; i++) {
             row.push(reader.getValue(i));
@@ -498,7 +498,7 @@ async function testSharedStringsDeduplication(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -533,7 +533,7 @@ async function testMixedTypesInColumn(): Promise<void> {
     await reader.open(filePath);
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row = [reader.getValue(0), reader.getValue(1)];
         rows.push(row);
     }
@@ -563,7 +563,7 @@ async function testDateColumnWidth(): Promise<void> {
     const batchReader = new XlsbReader();
     await batchReader.open(batchFilePath);
     const batchRows: any[][] = [];
-    while (batchReader.read()) {
+    while (await batchReader.read()) {
         batchRows.push([batchReader.getValue(0), batchReader.getValue(1)]);
     }
     await batchReader.close();
@@ -603,7 +603,7 @@ async function testDateColumnWidth(): Promise<void> {
     const streamReader = new XlsbReader();
     await streamReader.open(streamFilePath);
     const streamRows: any[][] = [];
-    while (streamReader.read()) {
+    while (await streamReader.read()) {
         streamRows.push([streamReader.getValue(0), streamReader.getValue(1)]);
     }
     await streamReader.close();

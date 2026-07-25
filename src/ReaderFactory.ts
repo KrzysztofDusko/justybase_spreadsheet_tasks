@@ -3,7 +3,14 @@ import { XlsxReader } from './XlsxReader';
 import { XlsbReader } from './XlsbReader';
 import { ExcelReaderAbstract } from './ExcelReaderAbstract';
 
+/**
+ * Create an XLSB or XLSX reader based on the file extension.
+ */
 export class ReaderFactory {
+    /**
+     * @param filePath Path ending in `.xlsb` or `.xlsx`
+     * @throws if the extension is unsupported
+     */
     static create(filePath: string): ExcelReaderAbstract {
         const ext = path.extname(filePath).toLowerCase();
         if (ext === '.xlsx') {

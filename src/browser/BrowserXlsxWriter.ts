@@ -2,9 +2,9 @@
  * BrowserXlsxWriter - Browser XLSX writer with bold/frozen headers and autofit.
  * @module BrowserXlsxWriter
  */
-import { BrowserBigBuffer } from './BrowserBigBuffer.js';
-import { BrowserZip } from './BrowserZip.js';
-import { isFormattedCell, unwrapCell, getFormat } from './Formats.js';
+import { BrowserBigBuffer } from './BrowserBigBuffer';
+import { BrowserZip } from './BrowserZip';
+import { isFormattedCell, unwrapCell, getFormat } from '../Formats';
 
 const COL_LETTERS = (() => {
     const l = []; for (let i=65;i<91;i++) l.push(String.fromCharCode(i));

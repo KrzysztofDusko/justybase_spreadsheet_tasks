@@ -152,29 +152,30 @@ const sheets = reader.getSheetNames();
 console.log(sheets); // ['Sheet1', 'Sheet2']
 ```
 
-#### `read(): boolean`
+#### `read(): Promise<boolean>`
 
 Reads the next row. Returns `true` if a row was read, `false` if end of sheet reached.
+Always use `await` (both XLSB and XLSX are async in v2+).
 
 **Example:**
 ```typescript
-while (reader.read()) {
+while (await reader.read()) {
     // Process row
 }
 ```
 
-#### `getValue(columnIndex: number): any`
+#### `getValue(columnIndex: number): CellValue`
 
 Gets value at the specified column index in the current row.
 
 **Parameters:**
 - `columnIndex` - Zero-based column index
 
-**Returns:** Value at the column (string, number, boolean, Date, or null)
+**Returns:** `CellValue` (string, number, boolean, Date, bigint, or null/undefined)
 
 **Example:**
 ```typescript
-while (reader.read()) {
+while (await reader.read()) {
     const name = reader.getValue(0);
     const age = reader.getValue(1);
     console.log(`${name}: ${age}`);
@@ -215,11 +216,9 @@ Returns array of worksheet names.
 
 #### `read(): Promise<boolean>`
 
-Reads the next row. Returns `true` if a row was read.
+Reads the next row. Returns `true` if a row was read. Always use `await`.
 
-> **Note:** Unlike XlsbReader, this method is async due to the XML parsing nature.
-
-#### `getValue(columnIndex: number): any`
+#### `getValue(columnIndex: number): CellValue`
 
 Gets value at the specified column index.
 

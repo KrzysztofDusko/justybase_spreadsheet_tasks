@@ -24,37 +24,44 @@ A high-performance TypeScript library for reading and writing Excel files in XLS
 | Read (50K rows) | 118 ms | 276 ms | **2.3x faster** |
 | File Size | 1.49 MB | 2.83 MB | **47% smaller** |
 
-## 📦 Installation
+## Installation
 
 ```bash
 npm install @justybase/spreadsheet-tasks
 ```
 
-## 🌐 Browser Support & CDN (Zero Dependencies)
+CJS and ESM are both supported:
 
-This library includes browser-compatible modules to generate XLSB and XLSX files directly on the client side without relying on Node.js APIs or external dependencies.
-
-To bundle the browser version into a single minified file (e.g. for deployment to a CDN), run the following command in the project root:
-
-```bash
-npx esbuild browser/browser-spreadsheet.js --bundle --minify --format=esm --outfile=browser/justybase-spreadsheet.min.js
+```js
+const { XlsbWriter } = require('@justybase/spreadsheet-tasks');
+import { XlsbWriter } from '@justybase/spreadsheet-tasks';
 ```
 
-You can then import this single file via a script tag in any web application:
+## Browser Support & CDN (Zero Dependencies)
+
+Browser writers live in TypeScript under `src/browser/` and are bundled with:
+
+```bash
+npm run build:browser
+```
+
+This produces:
+
+- `browser/justybase-spreadsheet.min.js` — IIFE (`JustybaseSpreadsheet` global)
+- `browser/browser-spreadsheet.js` — ESM for local demos (`demo.html`, `test.html`)
 
 ```html
 <script type="module">
-  import { downloadXlsb, downloadXlsx } from 'https://your-cdn.com/justybase-spreadsheet.min.js';
-  
-  const headers = ["ID", "Name", "Score"];
+  import { downloadXlsb, downloadXlsx, F } from './browser-spreadsheet.js';
+
+  const headers = ['ID', 'Name', 'Score'];
   const rows = [
-    [1, "Alice", 99.5],
-    [2, "Bob", 88.0]
+    [1, 'Alice', 99.5],
+    [2, 'Bob', 88.0],
   ];
-  
-  // Generates the file and triggers the browser download automatically
+
   document.getElementById('downloadBtn').addEventListener('click', () => {
-    downloadXlsb('report.xlsb', rows, headers, { headerStyle: 'bold+fill' });
+    downloadXlsb('report.xlsb', rows, headers);
   });
 </script>
 ```
@@ -66,7 +73,9 @@ You can then import this single file via a script tag in any web application:
 - Frozen and styled headers (styles: `bold`, `fill`, `bold+fill`)
 - Auto-filters enabled by default
 
-## 🔧 Quick Start
+See [CHANGELOG.md](./CHANGELOG.md) for v2 breaking changes (`await reader.read()`).
+
+## Quick Start
 
 ### Writing Excel Files
 
@@ -148,7 +157,7 @@ await reader.open('data.xlsb');
 
 console.log('Sheet names:', reader.getSheetNames());
 
-while (reader.read()) {
+while (await reader.read()) {
     const row = [];
     for (let i = 0; i < reader.fieldCount; i++) {
         row.push(reader.getValue(i));

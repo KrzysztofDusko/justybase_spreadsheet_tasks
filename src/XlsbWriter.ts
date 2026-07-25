@@ -2,9 +2,15 @@ import * as fs from 'fs';
 import archiver from 'archiver';
 import { Readable } from 'stream';
 import { BigBuffer } from './BigBuffer';
-import { isFormattedCell, unwrapCell, getFormat } from './Formats';
-
-const INVALID_SHEET_NAME_CHARS = /[\\/*?[\]:]/g;
+import { CellValue, unwrapCell, getFormat } from './Formats';
+import { StreamingSheetState } from './StreamingSheetState';
+import {
+    sanitizeSheetName,
+    initColWidths,
+    applyHeaderWidths,
+    updateColWidthsFromRows,
+    defaultColWidth,
+} from './writerHelpers';
 
 interface SheetInfo {
     name: string;
@@ -21,6 +27,10 @@ interface SheetInfo {
     };
 }
 
+/**
+ * High-performance XLSB (Excel Binary Workbook) writer.
+ * Prefer this format for large datasets — typically faster and smaller than XLSX.
+ */
 export class XlsbWriter {
     private output: fs.WriteStream;
     private archive: ReturnType<typeof archiver>;
@@ -30,7 +40,6 @@ export class XlsbWriter {
     private sstDic: Map<string, number> = new Map();
     private sstCntUnique: number = 0;
     private sstCntAll: number = 0;
-    private colWidths: number[] = [];
     private _autofilterIsOn: boolean = false;
 
     private _oaEpoch: number;
@@ -38,10 +47,12 @@ export class XlsbWriter {
     private _nextXfIdx: number = 4;
     private _stFmtRecords: Map<string, { numfmtId: number; xfIndex: number }> = new Map();
 
+    /** Worksheet binary template (BrtBeginSheet … dimension / views / cols placeholders). */
     private _sheet1Bytes: Buffer;
     private _workbookBinStart: Buffer;
     private _workbookBinMiddle: Buffer;
     private _workbookBinEnd: Buffer;
+    /** Default styles.bin template; extended when custom number formats are registered. */
     private _stylesBin: Buffer;
     private _binaryIndexBin: Buffer;
     private _rRkIntegerLowerLimit: number;
@@ -49,19 +60,17 @@ export class XlsbWriter {
     private _autoFilterStartBytes: Buffer;
     private _autoFilterEndBytes: Buffer;
     private _stickHeaderA1bytes: Buffer;
+    /** Excel 2016+ autofilter compatibility stubs. */
     private _magicFilterExcel2016Fix0: Buffer;
     private _magicFilterExcel2016Fix1: Buffer;
     private _magicFilterExcel2016Fix2: Buffer;
 
-    // Streaming state
-    private currentSheetBuffer: BigBuffer | null = null;
-    private currentSheetRowNum: number = 0;
-    private currentSheetStartCol: number = 0;
-    private currentSheetEndCol: number = 0;
-    private currentSheetDoAutofilter: boolean = false;
-    private isStreaming: boolean = false;
+    private readonly stream = new StreamingSheetState();
 
 
+    /**
+     * @param filePath Destination `.xlsb` path on disk.
+     */
     constructor(filePath: string) {
         this.output = fs.createWriteStream(filePath);
         this.archive = archiver('zip');
@@ -234,18 +243,9 @@ export class XlsbWriter {
         this._magicFilterExcel2016Fix2 = Buffer.from([0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]);
     }
 
+    /** @deprecated Internal; kept for unit-test access. Prefer sanitizeSheetName(). */
     private _sanitizeSheetName(name: string): string {
-        if (!name || typeof name !== 'string') {
-            return `Sheet${this.sheetCount + 1}`;
-        }
-        let sanitized = name.replace(INVALID_SHEET_NAME_CHARS, '_');
-        if (sanitized.length > 31) {
-            sanitized = sanitized.substring(0, 31);
-        }
-        if (sanitized.trim().length === 0) {
-            sanitized = `Sheet${this.sheetCount + 1}`;
-        }
-        return sanitized;
+        return sanitizeSheetName(name, this.sheetCount);
     }
 
     private _registerFormat(fmtString: string): number {
@@ -393,8 +393,13 @@ export class XlsbWriter {
         return Buffer.concat(parts);
     }
 
+    /**
+     * Register a worksheet (metadata only). Prefer `writeSheet` / `startSheet` for data.
+     * @param sheetName Display name (sanitized to Excel rules)
+     * @param hidden Whether the sheet is hidden in Excel
+     */
     addSheet(sheetName: string, hidden: boolean = false): void {
-        const sanitizedName = this._sanitizeSheetName(sheetName);
+        const sanitizedName = sanitizeSheetName(sheetName, this.sheetCount);
         this.sheetCount++;
         this.sheetList.push({
             name: sanitizedName,
@@ -419,56 +424,25 @@ export class XlsbWriter {
         headers?: string[],
         options: { hidden?: boolean; doAutofilter?: boolean; sampleRows?: unknown[][] } = {}
     ): void {
-        if (this.isStreaming) {
-            throw new Error('Already in streaming mode. Call endSheet() first.');
-        }
-
         const { hidden = false, doAutofilter = true, sampleRows } = options;
 
         // Add sheet metadata
         this.addSheet(sheetName, hidden);
 
-        // Initialize streaming state
-        this.isStreaming = true;
-        this.currentSheetBuffer = new BigBuffer();
-        this.currentSheetRowNum = 0;
-        this.currentSheetStartCol = 0;
-        this.currentSheetEndCol = columnCount;
-        this.currentSheetDoAutofilter = doAutofilter && headers !== undefined;
-
-        const bigBuf = this.currentSheetBuffer;
-
-        // Initialize column widths
-        this.colWidths = new Array(columnCount).fill(-1.0);
+        this.stream.begin(columnCount, doAutofilter && headers !== undefined, new BigBuffer());
+        const bigBuf = this.stream.buffer!;
 
         if (headers) {
-            for (let i = 0; i < columnCount; i++) {
-                const len = headers[i] ? headers[i].length + 1 : 0;
-                let width = 1.25 * len + 2;
-                if (width > 80) width = 80;
-                if (this.colWidths[i] < width) this.colWidths[i] = width;
-            }
+            applyHeaderWidths(this.stream.colWidths, headers, columnCount);
         }
-
         if (sampleRows) {
-            for (let r = 0; r < Math.min(sampleRows.length, 100); r++) {
-                const row = sampleRows[r];
-                for (let c = 0; c < row.length; c++) {
-                    const raw = row[c];
-                    if (raw === null || raw === undefined) continue;
-                    const val = isFormattedCell(raw) ? raw.value : raw;
-                    const len = val instanceof Date ? 20 : val.toString().length + 1;
-                    let width = 1.25 * len + 2;
-                    if (width > 80) width = 80;
-                    if (this.colWidths[c] < width) this.colWidths[c] = width;
-                }
-            }
+            updateColWidthsFromRows(this.stream.colWidths, sampleRows);
         }
 
         // Write sheet header
         const sheetHeader = Buffer.from(this._sheet1Bytes);
-        sheetHeader.writeInt32LE(this.currentSheetStartCol, 40);
-        sheetHeader.writeInt32LE(this.currentSheetEndCol, 44);
+        sheetHeader.writeInt32LE(this.stream.startCol, 40);
+        sheetHeader.writeInt32LE(this.stream.endCol, 44);
 
         if (this.sheetCount !== 1) {
             sheetHeader[54] = 0x9C;
@@ -487,7 +461,7 @@ export class XlsbWriter {
         bigBuf.writeByte(134);
         bigBuf.writeByte(3);
 
-        for (let i = this.currentSheetStartCol; i < this.currentSheetEndCol; i++) {
+        for (let i = this.stream.startCol; i < this.stream.endCol; i++) {
             bigBuf.writeByte(0);
             bigBuf.writeByte(60);
             bigBuf.writeByte(18);
@@ -495,7 +469,7 @@ export class XlsbWriter {
             bigBuf.writeInt32LE(i);
             bigBuf.writeInt32LE(i);
 
-            const width = this.colWidths[i] > 0 ? Math.floor(this.colWidths[i]) : 10;
+            const width = defaultColWidth(this.stream.colWidths[i], true);
             bigBuf.writeByte(0);
             bigBuf.writeByte(Math.max(0, Math.min(255, width)));
             bigBuf.writeByte(0);
@@ -519,11 +493,11 @@ export class XlsbWriter {
 
         // Write header row if provided
         if (headers) {
-            this.createRowHeader(bigBuf, this.currentSheetRowNum, this.currentSheetStartCol, this.currentSheetEndCol);
+            this.createRowHeader(bigBuf, this.stream.rowNum, this.stream.startCol, this.stream.endCol);
             for (let c = 0; c < headers.length; c++) {
                 this.writeString(bigBuf, headers[c], c, true);
             }
-            this.currentSheetRowNum++;
+            this.stream.rowNum++;
         }
     }
 
@@ -531,21 +505,17 @@ export class XlsbWriter {
      * Write a single row in streaming mode. Must be called between startSheet() and endSheet().
      * @param row Array of cell values
      */
-    writeRow(row: any[]): void {
-        if (!this.isStreaming || !this.currentSheetBuffer) {
-            throw new Error('Not in streaming mode. Call startSheet() first.');
-        }
+    writeRow(row: CellValue[]): void {
+        const bigBuf = this.stream.assertStreaming();
 
-        if (row.length !== this.currentSheetEndCol - this.currentSheetStartCol) {
+        if (row.length !== this.stream.endCol - this.stream.startCol) {
             throw new Error(
-                `Row length mismatch. Expected ${this.currentSheetEndCol - this.currentSheetStartCol} columns, got ${row.length}`
+                `Row length mismatch. Expected ${this.stream.endCol - this.stream.startCol} columns, got ${row.length}`
             );
         }
 
-        const bigBuf = this.currentSheetBuffer;
-
         // Write row header
-        this.createRowHeader(bigBuf, this.currentSheetRowNum, this.currentSheetStartCol, this.currentSheetEndCol);
+        this.createRowHeader(bigBuf, this.stream.rowNum, this.stream.startCol, this.stream.endCol);
 
         // Write each cell
         for (let c = 0; c < row.length; c++) {
@@ -573,12 +543,12 @@ export class XlsbWriter {
             } else if (val instanceof Date) {
                 const oaDate = (val.getTime() - this._oaEpoch) / 86400000;
                 this.writeDouble(bigBuf, oaDate, c, fmtString !== null ? styleNum : 1);
-            } else {
+            } else if (val !== null && val !== undefined) {
                 this.writeString(bigBuf, val.toString(), c, false, fmtString !== null ? styleNum : undefined);
             }
         }
 
-        this.currentSheetRowNum++;
+        this.stream.rowNum++;
     }
 
     /**
@@ -586,20 +556,16 @@ export class XlsbWriter {
      * Must be called after startSheet() and writeRow() calls.
      */
     endSheet(): void {
-        if (!this.isStreaming || !this.currentSheetBuffer) {
-            throw new Error('Not in streaming mode. Call startSheet() first.');
-        }
-
-        const bigBuf = this.currentSheetBuffer;
+        const bigBuf = this.stream.assertStreaming();
         const sheetHeader = Buffer.from(this._sheet1Bytes);
 
         // Write sheet footer sections
         bigBuf.write(sheetHeader.subarray(218, 290));
 
         // Write autofilter if enabled
-        if (this.currentSheetDoAutofilter) {
+        if (this.stream.doAutofilter) {
             this._autofilterIsOn = true;
-            const endRow = this.currentSheetRowNum;
+            const endRow = this.stream.rowNum;
 
             bigBuf.write(this._autoFilterStartBytes);
 
@@ -609,41 +575,41 @@ export class XlsbWriter {
             bigBuf.write(rowBuf);
 
             const colBuf = Buffer.alloc(8);
-            colBuf.writeInt32LE(this.currentSheetStartCol, 0);
-            colBuf.writeInt32LE(this.currentSheetEndCol - 1, 4);
+            colBuf.writeInt32LE(this.stream.startCol, 0);
+            colBuf.writeInt32LE(this.stream.endCol - 1, 4);
             bigBuf.write(colBuf);
 
             bigBuf.write(this._autoFilterEndBytes);
 
-            // Update sheet metadata with filter info
+            // Store filter data for later
             const sheet = this.sheetList[this.sheetCount - 1];
             sheet.filterData = {
                 startRow: 0,
-                endRow: this.currentSheetRowNum - 1,
-                startColumn: this.currentSheetStartCol,
-                endColumn: this.currentSheetEndCol - 1
+                endRow: endRow - 1,
+                startColumn: this.stream.startCol,
+                endColumn: this.stream.endCol - 1
             };
         }
 
-        // Write final sheet footer
         bigBuf.write(sheetHeader.subarray(290));
 
-        // Append to archive as a stream
+        // Add to archive
         this.archive.append(Readable.from(bigBuf.getChunks()), {
             name: this.sheetList[this.sheetCount - 1].pathInArchive
         });
 
         // Reset streaming state
-        this.isStreaming = false;
-        this.currentSheetBuffer = null;
-        this.currentSheetRowNum = 0;
-        this.currentSheetStartCol = 0;
-        this.currentSheetEndCol = 0;
-        this.currentSheetDoAutofilter = false;
+        this.stream.end();
     }
 
 
-    writeSheet(rows: any[][], headers: string[] | null = null, doAutofilter: boolean = true): void {
+    /**
+     * Write an entire sheet in one call (batch mode).
+     * @param rows Data rows (`CellValue` cells; null/undefined = blank)
+     * @param headers Optional header row (bold + frozen + autofilter when enabled)
+     * @param doAutofilter Enable autofilter when headers are present (default true)
+     */
+    writeSheet(rows: CellValue[][], headers: string[] | null = null, doAutofilter: boolean = true): void {
         const bigBuf = new BigBuffer();
         let columnCount = 0;
 
@@ -653,29 +619,12 @@ export class XlsbWriter {
             columnCount = headers.length;
         }
 
-        this.colWidths = new Array(columnCount).fill(-1.0);
+        const colWidths = initColWidths(columnCount);
 
         if (headers) {
-            for (let i = 0; i < columnCount; i++) {
-                const len = headers[i] ? headers[i].length + 1 : 0;
-                let width = 1.25 * len + 2;
-                if (width > 80) width = 80;
-                if (this.colWidths[i] < width) this.colWidths[i] = width;
-            }
+            applyHeaderWidths(colWidths, headers, columnCount);
         }
-
-        for (let r = 0; r < Math.min(rows.length, 100); r++) {
-            const row = rows[r];
-            for (let c = 0; c < row.length; c++) {
-                const raw = row[c];
-                if (raw === null || raw === undefined) continue;
-                const val = isFormattedCell(raw) ? raw.value : raw;
-                const len = val instanceof Date ? 20 : val.toString().length + 1;
-                let width = 1.25 * len + 2;
-                if (width > 80) width = 80;
-                if (this.colWidths[c] < width) this.colWidths[c] = width;
-            }
-        }
+        updateColWidthsFromRows(colWidths, rows);
 
         const sheetHeader = Buffer.from(this._sheet1Bytes);
         const startCol = 0;
@@ -707,7 +656,7 @@ export class XlsbWriter {
             bigBuf.writeInt32LE(i);
             bigBuf.writeInt32LE(i);
 
-            const width = this.colWidths[i] > 0 ? Math.floor(this.colWidths[i]) : 10;
+            const width = defaultColWidth(colWidths[i], true);
             bigBuf.writeByte(0);
             bigBuf.writeByte(Math.max(0, Math.min(255, width)));
             bigBuf.writeByte(0);
@@ -767,7 +716,7 @@ export class XlsbWriter {
                 } else if (val instanceof Date) {
                     const oaDate = (val.getTime() - this._oaEpoch) / 86400000;
                     this.writeDouble(bigBuf, oaDate, c, fmtString !== null ? styleNum : 1);
-                } else {
+                } else if (val !== null && val !== undefined) {
                     this.writeString(bigBuf, val.toString(), c, false, fmtString !== null ? styleNum : undefined);
                 }
             }
@@ -968,6 +917,10 @@ export class XlsbWriter {
         wbBuffers.push(this._magicFilterExcel2016Fix2);
     }
 
+    /**
+     * Finalize the ZIP package and close the output stream.
+     * Must be awaited before the file is fully written.
+     */
     finalize(): Promise<void> {
         return new Promise((resolve, reject) => {
             try {

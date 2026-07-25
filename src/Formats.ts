@@ -1,8 +1,13 @@
+export type PrimitiveCellValue = string | number | boolean | Date | bigint | null | undefined;
+
 export interface FormattedCell {
-    value: any;
+    value: PrimitiveCellValue;
     format: string;
 }
 
+export type CellValue = PrimitiveCellValue | FormattedCell;
+
+/** Built-in Excel number-format strings for {@link FormattedCell}. */
 export const F = {
     THOUSANDS_SEP: '#,##0',
     CURRENCY_PLN: '#,##0.00 "z\u0142"',
@@ -32,18 +37,18 @@ export const F = {
     TIME_MS: 'hh:mm:ss.000',
 };
 
-export function isFormattedCell(val: any): val is FormattedCell {
-    return val !== null && val !== undefined && typeof val === 'object' && 'format' in val && typeof val.format === 'string';
+export function isFormattedCell(val: unknown): val is FormattedCell {
+    return val !== null && val !== undefined && typeof val === 'object' && 'format' in val && typeof (val as FormattedCell).format === 'string';
 }
 
-export function unwrapCell(val: any): any {
+export function unwrapCell(val: CellValue): PrimitiveCellValue {
     if (isFormattedCell(val)) {
         return val.value;
     }
     return val;
 }
 
-export function getFormat(val: any): string | null {
+export function getFormat(val: CellValue): string | null {
     if (isFormattedCell(val)) {
         return val.format;
     }

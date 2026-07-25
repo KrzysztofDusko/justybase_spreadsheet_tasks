@@ -26,7 +26,7 @@ async function readXlsbExample() {
 
     // Read all rows
     let rowCount = 0;
-    while (reader.read()) {
+    while (await reader.read()) {
         const row: any[] = [];
         for (let i = 0; i < reader.fieldCount; i++) {
             row.push(reader.getValue(i));

@@ -242,8 +242,7 @@ async function benchmarkMemoryWrite(
 async function benchmarkRead(
     name: string,
     filePath: string,
-    readerFactory: () => any,
-    isAsync: boolean = false
+    readerFactory: () => any
 ): Promise<BenchmarkResult> {
     const times: number[] = [];
 
@@ -254,16 +253,9 @@ async function benchmarkRead(
         const reader = readerFactory();
         await reader.open(filePath);
         let rowCount = 0;
-        if (isAsync) {
-            while (await reader.read()) {
-                rowCount++;
-                reader.getValue(1);
-            }
-        } else {
-            while (reader.read()) {
-                rowCount++;
-                reader.getValue(1);
-            }
+        while (await reader.read()) {
+            rowCount++;
+            reader.getValue(1);
         }
         if (reader.close) await reader.close();
         const end = performance.now();
@@ -407,16 +399,14 @@ async function benchmark(): Promise<void> {
     const xlsbReadResult = await benchmarkRead(
         'XlsbReader',
         outFileXlsb,
-        () => new XlsbReader(),
-        false
+        () => new XlsbReader()
     );
     printResult(xlsbReadResult, log, false);
 
     const xlsxReadResult = await benchmarkRead(
         'XlsxReader',
         outFileXlsx,
-        () => new XlsxReader(),
-        true
+        () => new XlsxReader()
     );
     printResult(xlsxReadResult, log, false);
 

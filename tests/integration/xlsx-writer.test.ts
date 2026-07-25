@@ -2,8 +2,8 @@
  * XLSX Writer Integration Tests
  */
 
-import { XlsxWriter } from '../../dist/XlsxWriter';
-import { XlsxReader } from '../../dist/XlsxReader';
+import { XlsxWriter } from '../../src/XlsxWriter';
+import { XlsxReader } from '../../src/XlsxReader';
 import * as fs from 'fs';
 import * as path from 'path';
 import AdmZip from 'adm-zip';
