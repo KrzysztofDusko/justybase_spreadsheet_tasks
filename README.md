@@ -1,28 +1,50 @@
-# SpreadsheetTasks
+# @justybase/spreadsheet-tasks
 
-A high-performance TypeScript library for reading and writing Excel files in XLSB and XLSX formats.
+High-performance TypeScript library for reading and writing Excel files in XLSB and XLSX formats.
 
-[![npm version](https://badge.fury.io/js/@justybase%2Fspreadsheet-tasks.svg)](https://www.npmjs.com/package/@justybase/spreadsheet-tasks)
+[![npm version](https://img.shields.io/npm/v/@justybase/spreadsheet-tasks.svg)](https://www.npmjs.com/package/@justybase/spreadsheet-tasks)
+[![CI](https://github.com/justybase/justybase_spreadsheet_tasks/actions/workflows/ci.yml/badge.svg)](https://github.com/justybase/justybase_spreadsheet_tasks/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🚀 Features
+## Table of Contents
 
-- **High Performance** - XLSB format is 3.3x faster to write and 2.1x faster to read than XLSX
-- **Small File Size** - XLSB files are ~47% smaller than equivalent XLSX files
-- **TypeScript First** - Full TypeScript support with type definitions
-- **Dual Format Support** - Read and write both XLSB and XLSX formats
-- **Zero External Dependencies** - Uses only Node.js built-in modules and minimal zip libraries
-- **Streaming Support** - Efficient memory usage for large files
-- **Multiple Sheets** - Support for multiple worksheets per workbook
-- **Auto-filter** - Automatic filter headers support
+- [Features](#features)
+- [Benchmark Results](#benchmark-results)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Browser Support](#browser-support)
+- [Quick Start](#quick-start)
+- [API Documentation](#api-documentation)
+- [Examples](#examples)
+- [When to Use XLSB vs XLSX](#when-to-use-xlsb-vs-xlsx)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
-## 📊 Benchmark Results
+## Features
+
+- **High Performance** — XLSB is about 3.3× faster to write and 2.3× faster to read than XLSX (see [benchmarks](#benchmark-results))
+- **Small File Size** — XLSB files are ~47% smaller than equivalent XLSX files
+- **TypeScript First** — Full TypeScript support with type definitions
+- **Dual Format Support** — Read and write both XLSB and XLSX formats
+- **Lightweight Node Dependencies** — Small ZIP-focused runtime deps (`adm-zip`, `archiver`, `yauzl`); no heavy Excel framework
+- **Streaming Support** — Efficient memory usage for large files
+- **Multiple Sheets** — Support for multiple worksheets per workbook
+- **Auto-filter** — Automatic filter headers support
+
+## Benchmark Results
+
+Measured with `npm run benchmark` (50K rows). Your results may vary by hardware and dataset.
 
 | Operation | XLSB | XLSX | Performance Gain |
 |-----------|------|------|------------------|
-| Write (50K rows) | 140 ms | 467 ms | **3.3x faster** |
-| Read (50K rows) | 118 ms | 276 ms | **2.3x faster** |
+| Write (50K rows) | 140 ms | 467 ms | **3.3× faster** |
+| Read (50K rows) | 118 ms | 276 ms | **2.3× faster** |
 | File Size | 1.49 MB | 2.83 MB | **47% smaller** |
+
+## Requirements
+
+- **Node.js** 16 or newer ([`engines`](./package.json) in `package.json`)
 
 ## Installation
 
@@ -30,14 +52,19 @@ A high-performance TypeScript library for reading and writing Excel files in XLS
 npm install @justybase/spreadsheet-tasks
 ```
 
-CJS and ESM are both supported:
+CommonJS:
 
 ```js
 const { XlsbWriter } = require('@justybase/spreadsheet-tasks');
+```
+
+ES modules:
+
+```js
 import { XlsbWriter } from '@justybase/spreadsheet-tasks';
 ```
 
-## Browser Support & CDN (Zero Dependencies)
+## Browser Support
 
 Browser writers live in TypeScript under `src/browser/` and are bundled with:
 
@@ -49,6 +76,8 @@ This produces:
 
 - `browser/justybase-spreadsheet.min.js` — IIFE (`JustybaseSpreadsheet` global)
 - `browser/browser-spreadsheet.js` — ESM for local demos (`demo.html`, `test.html`)
+
+The browser bundle has **no runtime npm dependencies** (ZIP logic is inlined).
 
 ```html
 <script type="module">
@@ -67,7 +96,8 @@ This produces:
 ```
 
 **Features included in the browser build:**
-- Built-in Zip archiving (no external libraries needed)
+
+- Built-in ZIP archiving (no external libraries in the bundle)
 - Memory-efficient `Uint8Array` buffer handling
 - Auto-fitted column widths
 - Frozen and styled headers (styles: `bold`, `fill`, `bold+fill`)
@@ -140,13 +170,13 @@ await writer.finalize();
 ```
 
 **Benefits of Streaming API:**
-- ✅ Constant memory usage regardless of dataset size
-- ✅ Write millions of rows without loading all data into RAM
-- ✅ Generate data on-the-fly from databases, APIs, or other sources
-- ✅ Same performance as batch mode
+
+- Constant memory usage regardless of dataset size
+- Write millions of rows without loading all data into RAM
+- Generate data on-the-fly from databases, APIs, or other sources
+- Same performance as batch mode
 
 ### Reading Excel Files
-
 
 ```typescript
 import { XlsbReader, XlsxReader, ReaderFactory } from '@justybase/spreadsheet-tasks';
@@ -171,28 +201,28 @@ await xlsbReader.open('data.xlsb');
 // ... same API as above
 ```
 
-## 📖 API Documentation
+## API Documentation
 
 See [API Documentation](./docs/API.md) for detailed API reference.
 
-## 💡 Examples
+## Examples
 
 Check out the [examples](./examples) folder for more usage examples:
 
-- [Basic Write](./examples/basic-write.ts) - Writing data to Excel files
-- [Basic Read](./examples/basic-read.ts) - Reading data from Excel files
-- [Multiple Sheets](./examples/multiple-sheets.ts) - Working with multiple worksheets
-- [Large Dataset](./examples/large-dataset.ts) - Handling large datasets efficiently
-- [Streaming Example](./examples/streaming-example.ts) - Write millions of rows without loading all data in memory
+- [Basic Write](./examples/basic-write.ts) — Writing data to Excel files
+- [Basic Read](./examples/basic-read.ts) — Reading data from Excel files
+- [Multiple Sheets](./examples/multiple-sheets.ts) — Working with multiple worksheets
+- [Large Dataset](./examples/large-dataset.ts) — Handling large datasets efficiently
+- [Streaming Example](./examples/streaming-example.ts) — Write millions of rows without loading all data in memory
 
 Run examples with:
+
 ```bash
 npm run build
 npx ts-node examples/basic-write.ts
 ```
 
-
-## 🔍 When to Use XLSB vs XLSX
+## When to Use XLSB vs XLSX
 
 | Use XLSB When | Use XLSX When |
 |---------------|---------------|
@@ -201,14 +231,30 @@ npx ts-node examples/basic-write.ts
 | Internal/backend processing | Human-readable XML is needed |
 | Storage space is limited | Third-party integrations require it |
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. To work on the project locally:
 
-## 📄 License
+```bash
+git clone https://github.com/justybase/justybase_spreadsheet_tasks.git
+cd justybase_spreadsheet_tasks
+npm install
+npm run build
+npm test
+```
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Before opening a pull request:
 
-## 🙏 Acknowledgments
+1. Run `npm run lint` and `npm test`.
+2. Add or update tests if you change behavior.
+3. Update [CHANGELOG.md](./CHANGELOG.md) for user-visible changes.
 
-- Inspired by and reimplemented from [SpreadSheetTasks](https://github.com/KrzysztofDusko/SpreadSheetTasks)
+Please open an issue or pull request on [GitHub](https://github.com/justybase/justybase_spreadsheet_tasks).
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Inspired by and reimplemented from [SpreadSheetTasks](https://github.com/justybae/SpreadSheetTasks)
