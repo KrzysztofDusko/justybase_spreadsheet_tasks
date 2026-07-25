@@ -4,9 +4,9 @@
  * Includes bold headers, frozen panes, and autofit columns.
  * @module BrowserXlsbWriter
  */
-import { BrowserBigBuffer } from './BrowserBigBuffer.js';
-import { BrowserZip } from './BrowserZip.js';
-import { isFormattedCell, unwrapCell, getFormat } from './Formats.js';
+import { BrowserBigBuffer } from './BrowserBigBuffer';
+import { BrowserZip } from './BrowserZip';
+import { isFormattedCell, unwrapCell, getFormat } from '../Formats';
 
 const INVALID_SHEET_NAME_CHARS = /[\\/*?[\]:]/g;
 

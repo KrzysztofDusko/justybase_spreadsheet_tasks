@@ -23,8 +23,7 @@ async function verifyFile(filePath: string, label: string) {
     console.log(`  Rows: ${reader.rowCount}, Cols: ${reader.fieldCount}`);
 
     const allRows: any[][] = [];
-    const isAsync = ext !== '.xlsb';
-    while (isAsync ? await (reader as XlsxReader).read() : (reader as XlsbReader).read()) {
+    while (await reader.read()) {
         const row: any[] = [];
         for (let i = 0; i < reader.fieldCount; i++) {
             row.push(reader.getValue(i));

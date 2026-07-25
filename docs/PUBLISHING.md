@@ -32,9 +32,14 @@ If the automated workflow fails or you need to publish manually:
 
 ### Steps
 
-1. Build the project:
+1. Build the project (CJS + ESM):
    ```bash
    npm run build
+   ```
+
+   Optionally build the browser IIFE bundle:
+   ```bash
+   npm run build:browser
    ```
 
 2. Run tests to ensure everything works:
@@ -46,6 +51,8 @@ If the automated workflow fails or you need to publish manually:
    ```bash
    npm publish --access public
    ```
+
+See [PACKAGING.md](./PACKAGING.md) for dual CJS/ESM layout and ZIP dependency notes.
 
 ## First Time Publishing
 

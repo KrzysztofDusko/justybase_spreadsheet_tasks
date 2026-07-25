@@ -3,10 +3,10 @@
  * These tests run fast and verify core write/read operations
  */
 
-import { XlsbWriter } from '../dist/XlsbWriter';
-import { XlsxWriter } from '../dist/XlsxWriter';
-import { XlsbReader } from '../dist/XlsbReader';
-import { XlsxReader } from '../dist/XlsxReader';
+import { XlsbWriter } from '../src/XlsbWriter';
+import { XlsxWriter } from '../src/XlsxWriter';
+import { XlsbReader } from '../src/XlsbReader';
+import { XlsxReader } from '../src/XlsxReader';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -66,7 +66,7 @@ async function testXlsbWriteRead(): Promise<void> {
     assertEqual(reader.getSheetNames(), ['TestSheet'], 'XLSB sheet name');
 
     const rows: any[][] = [];
-    while (reader.read()) {
+    while (await reader.read()) {
         const row: any[] = [];
         for (let i = 0; i < reader.fieldCount; i++) {
             row.push(reader.getValue(i));

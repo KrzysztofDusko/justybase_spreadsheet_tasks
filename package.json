@@ -1,30 +1,43 @@
 {
   "name": "@justybase/spreadsheet-tasks",
-  "version": "1.3.3",
+  "version": "2.0.0",
   "description": "High-performance TypeScript library for reading and writing Excel files in XLSB and XLSX formats. XLSB is 3.3x faster to write and 2.1x faster to read than XLSX.",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/cjs/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    }
+  },
   "files": [
     "dist",
+    "browser/justybase-spreadsheet.min.js",
+    "browser/browser-spreadsheet.js",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "docs",
     "examples"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsup && node -e \"require('fs').copyFileSync('dist-esm-package.json','dist/esm/package.json')\"",
+    "build:browser": "esbuild src/browser/download.ts --bundle --minify --format=iife --global-name=JustybaseSpreadsheet --outfile=browser/justybase-spreadsheet.min.js && esbuild src/browser/download.ts --bundle --format=esm --outfile=browser/browser-spreadsheet.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && npm run test:smoke && npm run test:unit && npm run test:integration",
-    "test:smoke": "npm run build && npx ts-node tests/smoke.test.ts",
+    "test": "npm run typecheck && npm run test:smoke && npm run test:unit && npm run test:integration && npm run test:dist",
+    "test:smoke": "npx ts-node tests/smoke.test.ts",
     "test:unit": "npx ts-node tests/unit/bigbuffer.test.ts && npx ts-node tests/unit/biff-reader-writer.test.ts && npx ts-node tests/unit/xlsb-writer.test.ts",
-    "test:integration": "npm run build && npx ts-node tests/integration/xlsb-writer.test.ts && npx ts-node tests/integration/xlsx-writer.test.ts",
-    "test:xlsb": "npm run build && npx ts-node tests/integration/xlsb-writer.test.ts",
-    "test:xlsx": "npm run build && npx ts-node tests/integration/xlsx-writer.test.ts",
+    "test:integration": "npx ts-node tests/integration/xlsb-writer.test.ts && npx ts-node tests/integration/xlsx-writer.test.ts",
+    "test:dist": "npm run build && npx ts-node tests/dist-surface.test.ts",
+    "test:xlsb": "npx ts-node tests/integration/xlsb-writer.test.ts",
+    "test:xlsx": "npx ts-node tests/integration/xlsx-writer.test.ts",
     "benchmark": "npm run build && npx ts-node benchmarks/performance.bench.ts",
     "benchmark:comparison": "npm run build && npx ts-node benchmarks/comparison.bench.ts",
     "test:excel-compat": "npm run build && npx tsx tests/excel-compat/run.ts",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm run build:browser && npm test"
   },
   "keywords": [
     "excel",
@@ -42,11 +55,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/KrzysztofDusko/justybase_spreadsheet_tasks.git"
+    "url": "git+https://github.com/justybase/justybase_spreadsheet_tasks.git"
   },
-  "homepage": "https://github.com/KrzysztofDusko/justybase_spreadsheet_tasks#readme",
+  "homepage": "https://github.com/justybase/justybase_spreadsheet_tasks#readme",
   "bugs": {
-    "url": "https://github.com/KrzysztofDusko/justybase_spreadsheet_tasks/issues"
+    "url": "https://github.com/justybase/justybase_spreadsheet_tasks/issues"
   },
   "engines": {
     "node": ">=16.0.0"
@@ -62,9 +75,11 @@
     "@types/archiver": "^7.0.0",
     "@types/node": "^22.10.5",
     "@types/yauzl": "^2.10.3",
+    "esbuild": "0.28.1",
     "eslint": "^9.17.0",
     "exceljs": "^3.4.0",
     "ts-node": "^10.9.2",
+    "tsup": "8.5.1",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.19.1"
   }

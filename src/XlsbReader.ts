@@ -1,6 +1,7 @@
 import AdmZip from 'adm-zip';
 import { ExcelReaderAbstract } from './ExcelReaderAbstract';
 import { BiffReaderWriter } from './BiffReaderWriter';
+import { CellValue } from './Formats';
 
 interface SheetInfo {
     name: string;
@@ -16,7 +17,7 @@ export class XlsbReader extends ExcelReaderAbstract {
 
     private _currentSheetIndex: number = -1;
     private _reader: BiffReaderWriter | null = null;
-    private _currentRow: any[] = [];
+    private _currentRow: CellValue[] = [];
     private _pendingRowIndex: number = -1;
     private _eof: boolean = false;
 
@@ -109,7 +110,7 @@ export class XlsbReader extends ExcelReaderAbstract {
         return this.sheetNames;
     }
 
-    read(): boolean {
+    async read(): Promise<boolean> {
         if (this._currentSheetIndex === -1) {
             this._currentSheetIndex = 0;
             if (!this._initSheet(0)) return false;
@@ -133,7 +134,7 @@ export class XlsbReader extends ExcelReaderAbstract {
 
             if (this._reader!._readCell) {
                 const col = this._reader!._columnNum;
-                let val: any = null;
+                let val: CellValue = null;
                 switch (this._reader!._cellType) {
                     case 2:
                         val = this.sharedStrings[this._reader!._intValue];
@@ -153,7 +154,7 @@ export class XlsbReader extends ExcelReaderAbstract {
 
                         if (isDate) {
                             try {
-                                val = this.getDateTimeFromOaDate(val);
+                                val = this.getDateTimeFromOaDate(val as number);
                             } catch {
                                 // ignore date conversion errors
                             }
@@ -197,7 +198,7 @@ export class XlsbReader extends ExcelReaderAbstract {
         return false;
     }
 
-    getValue(i: number): any {
+    getValue(i: number): CellValue {
         if (i < 0 || i >= this._currentRow.length) return null;
         return this._currentRow[i];
     }

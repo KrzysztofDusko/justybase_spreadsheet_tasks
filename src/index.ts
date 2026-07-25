@@ -13,4 +13,23 @@ export { XlsbWriter } from './XlsbWriter';
 export { XlsxWriter } from './XlsxWriter';
 
 // Formatting
-export { FormattedCell, F, isFormattedCell, unwrapCell, getFormat } from './Formats';
+export {
+    FormattedCell,
+    CellValue,
+    PrimitiveCellValue,
+    F,
+    isFormattedCell,
+    unwrapCell,
+    getFormat,
+} from './Formats';
+
+// Writer helpers (shared)
+export {
+    sanitizeSheetName,
+    initColWidths,
+    applyHeaderWidths,
+    updateColWidthsFromRows,
+    defaultColWidth,
+    INVALID_SHEET_NAME_CHARS,
+} from './writerHelpers';
+export { StreamingSheetState } from './StreamingSheetState';

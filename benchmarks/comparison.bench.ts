@@ -140,7 +140,7 @@ async function benchmark(): Promise<void> {
 
     const xlsbReader = new XlsbReader();
     await xlsbReader.open(outFileXlsb);
-    while (xlsbReader.read()) {
+    while (await xlsbReader.read()) {
         rowsReadXlsb++;
         xlsbReader.getValue(1);
     }

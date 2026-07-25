@@ -336,9 +336,11 @@ async function generateNodeSuites(outDir: string) {
 
 async function generateBrowserSuites(outDir: string) {
   ensureDir(outDir);
-  const { BrowserXlsbWriter } = await import('../../browser/BrowserXlsbWriter.js');
-  const { BrowserXlsxWriter } = await import('../../browser/BrowserXlsxWriter.js');
-  const { F: BF } = await import('../../browser/Formats.js');
+  const {
+    BrowserXlsbWriter,
+    BrowserXlsxWriter,
+    F: BF,
+  } = await import('../../browser/browser-spreadsheet.js');
 
   const browserSuites = [
     { id: '17', name: 'browser-equiv-15', sheets: 15, filter: true, special: 'Browser API: same as #05' },

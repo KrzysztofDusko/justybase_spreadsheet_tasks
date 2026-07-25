@@ -106,7 +106,7 @@ async function readLargeXlsb(): Promise<{ time: number; rowCount: number }> {
     await reader.open(filePath);
 
     let rowCount = 0;
-    while (reader.read()) {
+    while (await reader.read()) {
         rowCount++;
         // Access values to simulate real-world usage
         for (let i = 0; i < reader.fieldCount; i++) {

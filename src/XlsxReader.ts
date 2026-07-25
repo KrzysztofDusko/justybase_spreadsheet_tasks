@@ -1,5 +1,6 @@
 import yauzl, { ZipFile, Entry } from 'yauzl';
 import { ExcelReaderAbstract } from './ExcelReaderAbstract';
+import { CellValue } from './Formats';
 
 interface SheetInfo {
     name: string;
@@ -19,7 +20,7 @@ export class XlsxReader extends ExcelReaderAbstract {
     private _sheetXml: string | null = null;
     private _xmlPos: number = 0;
 
-    private _currentRow: any[] = [];
+    private _currentRow: CellValue[] = [];
 
     xfIdToNumFmtId: number[] = [];
     customDateFormats: Set<number> = new Set();
@@ -359,7 +360,7 @@ export class XlsxReader extends ExcelReaderAbstract {
         return column - 1;
     }
 
-    getValue(i: number): any {
+    getValue(i: number): CellValue {
         if (i < 0 || i >= this._currentRow.length) return null;
         return this._currentRow[i];
     }
