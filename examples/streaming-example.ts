@@ -7,13 +7,15 @@
  * Run with: npx ts-node examples/streaming-example.ts
  */
 
-import { XlsbWriter } from '../dist/XlsbWriter';
+import { XlsbWriter } from '../dist/cjs';
 import * as path from 'path';
+import * as fs from 'fs';
 
 async function streamingExample() {
     console.log('=== XlsbWriter Streaming Example ===\n');
 
     const outputPath = path.join(__dirname, '..', 'output', 'streaming-example.xlsb');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     console.log(`Output file: ${outputPath}\n`);
 
     const writer = new XlsbWriter(outputPath);

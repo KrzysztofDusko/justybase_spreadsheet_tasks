@@ -1,6 +1,7 @@
 import yauzl, { ZipFile, Entry } from 'yauzl';
 import { ExcelReaderAbstract } from './ExcelReaderAbstract';
 import { CellValue } from './Formats';
+import { unescapeXml, columnLetterToIndex, parseSharedStringsXml } from './xmlUtils';
 
 interface SheetInfo {
     name: string;
@@ -59,7 +60,7 @@ export class XlsxReader extends ExcelReaderAbstract {
                             const sheetRegex = /<sheet[^>]*name="([^"]*)"[^>]*sheetId="([^"]*)"[^>]*r:id="([^"]*)"/g;
                             let match;
                             while ((match = sheetRegex.exec(wbContent)) !== null) {
-                                const name = this._unescapeXml(match[1]);
+                                const name = unescapeXml(match[1]);
                                 const sheetId = match[2];
                                 const rId = match[3];
 
@@ -123,42 +124,8 @@ export class XlsxReader extends ExcelReaderAbstract {
         });
     }
 
-    private _unescapeXml(str: string): string {
-        if (!str) return "";
-        if (str.indexOf('&') === -1) return str;
-        return str.replace(/&amp;/g, '&')
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&quot;/g, '"')
-            .replace(/&apos;/g, "'");
-    }
-
     private _parseSharedStrings(xml: string): void {
-        let pos = 0;
-        while (true) {
-            const siStart = xml.indexOf('<si>', pos);
-            if (siStart === -1) break;
-
-            const siEnd = xml.indexOf('</si>', siStart);
-            if (siEnd === -1) break;
-
-            const content = xml.substring(siStart, siEnd);
-            let val = "";
-            let tPos = 0;
-            while (true) {
-                const tStart = content.indexOf('<t', tPos);
-                if (tStart === -1) break;
-                const tagEnd = content.indexOf('>', tStart);
-                const tEnd = content.indexOf('</t>', tagEnd);
-                if (tEnd === -1) break;
-
-                val += content.substring(tagEnd + 1, tEnd);
-                tPos = tEnd + 4;
-            }
-
-            this.sharedStrings.push(this._unescapeXml(val));
-            pos = siEnd + 5;
-        }
+        this.sharedStrings = parseSharedStringsXml(xml);
     }
 
     private _parseStyles(xml: string): void {
@@ -273,7 +240,7 @@ export class XlsxReader extends ExcelReaderAbstract {
                     if (key === 'r') {
                         let letterLen = 0;
                         while (letterLen < val.length && val.charCodeAt(letterLen) >= 65) letterLen++;
-                        colIndex = this._columnLetterToIndex(val.substring(0, letterLen));
+                        colIndex = columnLetterToIndex(val.substring(0, letterLen));
                     } else if (key === 't') {
                         type = val;
                     } else if (key === 's') {
@@ -319,7 +286,7 @@ export class XlsxReader extends ExcelReaderAbstract {
                 } else if (type === 'b') {
                     finalVal = (val === '1' || val === 'true');
                 } else if (type === 'inlineStr') {
-                    finalVal = this._unescapeXml(val);
+                    finalVal = unescapeXml(val);
                 } else if (type === 'n' || type === '') {
                     finalVal = parseFloat(val);
 
@@ -349,15 +316,6 @@ export class XlsxReader extends ExcelReaderAbstract {
                 if (colIndex >= this.fieldCount) this.fieldCount = colIndex + 1;
             }
         }
-    }
-
-    private _columnLetterToIndex(letter: string): number {
-        let column = 0;
-        const length = letter.length;
-        for (let i = 0; i < length; i++) {
-            column += (letter.charCodeAt(i) - 64) * Math.pow(26, length - i - 1);
-        }
-        return column - 1;
     }
 
     getValue(i: number): CellValue {

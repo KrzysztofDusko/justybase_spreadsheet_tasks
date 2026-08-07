@@ -6,6 +6,8 @@
 - [XlsxWriter](#xlsxwriter)
 - [XlsbReader](#xlsbreader)
 - [XlsxReader](#xlsxreader)
+- [XlsxUpdater](#xlsxupdater)
+- [XlsbUpdater](#xlsbupdater)
 - [ReaderFactory](#readerfactory)
 - [Types](#types)
 
@@ -221,6 +223,162 @@ Reads the next row. Returns `true` if a row was read. Always use `await`.
 #### `getValue(columnIndex: number): CellValue`
 
 Gets value at the specified column index.
+
+---
+
+## XlsxUpdater
+
+Updates the data of a worksheet inside an existing `.xlsx` file without rebuilding
+the workbook. Everything outside the target sheet's cell data — pivot tables and
+their caches, other sheets, styles, themes, defined names — is preserved, which
+makes it possible to refresh a data sheet that pivot tables / charts / formulas
+are wired to.
+
+### Constructor
+
+```typescript
+new XlsxUpdater(filePath: string)
+```
+
+**Parameters:**
+- `filePath` - Path to an existing `.xlsx` file
+
+Throws if the file does not exist, is not a valid XLSX, or is an XLSB
+(XLSB updates are not supported yet).
+
+**Example:**
+```typescript
+const updater = new XlsxUpdater('report.xlsx');
+```
+
+### Methods
+
+#### `getSheetNames(): string[]`
+
+Returns the worksheet names in workbook order.
+
+#### `replaceSheetData(sheetName: string, rows: CellValue[][], options?: ReplaceSheetDataOptions): void`
+
+Clears the entire cell data of the target sheet and writes new rows in its place.
+
+**Parameters:**
+- `sheetName` - Name of the worksheet to replace. Throws if not found.
+- `rows` - 2D array of new data (`null` / `undefined` cells stay empty).
+  Trailing rows that contain no non-empty cells are trimmed so the written
+  range matches the actual data (pivot tables won't pick up "(blank)" items
+  from padding rows).
+- `options` - Optional object:
+  - `headers?: string[]` - Optional header row written into row 1
+  - `styleFallback?: 'inherit' | 'general'` - Style strategy for new cells
+    (default `'inherit'`)
+
+**Behavior:**
+- The sheet's `<dimension>` and `<autoFilter>` ranges are recalculated and end
+  exactly at the last data row.
+- When `headers` are omitted, the first data row lands in row 1 and becomes the
+  pivot's field names — always pass `headers` matching the original columns.
+- New strings are appended to `xl/sharedStrings.xml` (existing entries and their
+  indices are never modified); files without a shared string table use inline strings.
+- With `styleFallback: 'inherit'` (default), new cells reuse the dominant style
+  of their column from the existing data, and `Date` cells fall back to a date
+  style found in `styles.xml` when the column has none.
+- Pivot tables whose `worksheetSource` references the updated sheet get their
+  `ref` and `recordCount` adjusted, and `refreshOnLoad="1"` is added to the
+  pivot table definitions so Excel refreshes them on open.
+
+**Example:**
+```typescript
+const updater = new XlsxUpdater('report.xlsx');
+updater.replaceSheetData('data1', rows, { headers: ['ID', 'NAME'] });
+updater.save('report_new.xlsx');
+```
+
+#### `save(outputPath?: string): void`
+
+Writes the updated workbook to disk. When `outputPath` is omitted, the source
+file is overwritten in place.
+
+#### `toBuffer(): Buffer`
+
+Returns the updated workbook as an in-memory ZIP buffer.
+
+---
+
+## XlsbUpdater
+
+Updates the data of a worksheet inside an existing `.xlsb` file without
+rebuilding the workbook. Everything outside the target sheet's rows — pivot
+tables and their caches, other sheets, styles, column widths, views — is
+preserved byte-for-byte.
+
+The API is identical to [XlsxUpdater](#xlsxupdater); see that section for the
+behavior of `replaceSheetData` (inherited column styles, shared-strings
+appending, pivot cache range + `refreshOnLoad`).
+
+### Constructor
+
+```typescript
+new XlsbUpdater(filePath: string)
+```
+
+**Parameters:**
+- `filePath` - Path to an existing `.xlsb` file
+
+Throws if the file does not exist, is not a valid XLSB, or is an XLSX
+(XLSB-only updater).
+
+### Methods
+
+#### `getSheetNames(): string[]`
+
+Returns the worksheet names in workbook order.
+
+#### `replaceSheetData(sheetName: string, rows: CellValue[][], options?: ReplaceSheetDataOptions): void`
+
+Clears the entire cell data of the target sheet and writes new rows in its place.
+
+**Parameters:**
+- `sheetName` - Name of the worksheet to replace. Throws if not found.
+- `rows` - 2D array of new data (`null` / `undefined` cells stay empty).
+  Trailing rows that contain no non-empty cells are trimmed so the written
+  range matches the actual data (pivot tables won't pick up "(blank)" items
+  from padding rows).
+- `options` - Optional object:
+  - `headers?: string[]` - Optional header row written into row 1
+  - `styleFallback?: 'inherit' | 'general'` - Style strategy for new cells
+    (default `'inherit'`)
+
+**Behavior:**
+- Only the worksheet's row records are replaced; column widths, views, and all
+  other sheet records are preserved. Auto-filter ranges are recalculated.
+- The sheet's dimension record and the pivot cache source range end exactly at
+  the last data row.
+- When `headers` are omitted, the first data row lands in row 1 and becomes the
+  pivot's field names — always pass `headers` matching the original columns.
+- New strings are appended to `xl/sharedStrings.bin` (existing entries and their
+  indices are never modified).
+- With `styleFallback: 'inherit'` (default), new cells reuse the dominant cell
+  style (xf) of their column from the existing data, and `Date` cells fall back
+  to a date style found in `styles.bin` when the column has none.
+- Pivot caches whose `worksheetSource` references the updated sheet get their
+  range and record count adjusted, and the `refreshOnLoad` flag is set so Excel
+  refreshes them on open.
+
+**Example:**
+```typescript
+const updater = new XlsbUpdater('report.xlsb');
+updater.replaceSheetData('data1', rows, { headers: ['ID', 'NAME'] });
+updater.save('report_new.xlsb');
+```
+
+#### `save(outputPath?: string): void`
+
+Writes the updated workbook to disk. When `outputPath` is omitted, the source
+file is overwritten in place.
+
+#### `toBuffer(): Buffer`
+
+Returns the updated workbook as an in-memory ZIP buffer.
 
 ---
 

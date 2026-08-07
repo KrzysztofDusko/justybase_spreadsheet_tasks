@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-08-07
+
+### Added
+
+- `XlsxUpdater` and `XlsbUpdater` — replace the data of a worksheet inside an
+  existing `.xlsx` / `.xlsb` file without rebuilding the workbook. Pivot tables,
+  other sheets, styles and defined names are preserved; shared strings are
+  appended (never reordered), column styles are inherited, and pivot cache
+  ranges + `refreshOnLoad` are updated automatically.
+- Shared helpers: `xmlUtils.ts` (XML escaping, column letters, shared strings
+  parsing) and `biff12Utils.ts` (BIFF12 record helpers for XLSB).
+- `examples/update-existing.ts` — end-to-end example for refreshing a data
+  sheet in an existing XLSX / XLSB report.
+
+### Fixed
+
+- `XlsbUpdater` pivot source range was one row too long when `headers` were not
+  provided, causing an empty trailing row (and a "(blank)" item in pivot
+  tables). The range now ends exactly at the last data row.
+- Both updaters now trim trailing rows that contain only empty cells (padding
+  rows from SQL exports), so they don't appear as "(blank)" in pivot tables.
+- `XlsbUpdater` no longer removes the worksheet's row-block terminator records
+  (0x92/0x217/0x1dd/0x1dc) and keeps the sheet dimension record (0x98) in sync
+  with the new row count — without these, Excel hid the last written row.
+
 ## [2.0.0] - 2026-07-25
 
 ### Breaking

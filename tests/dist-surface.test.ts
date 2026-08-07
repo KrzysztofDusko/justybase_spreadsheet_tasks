@@ -15,6 +15,8 @@ const required = [
     'F',
     'sanitizeSheetName',
     'StreamingSheetState',
+    'XlsxUpdater',
+    'XlsbUpdater',
 ];
 
 let failed = 0;

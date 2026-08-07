@@ -31,6 +31,7 @@ High-performance TypeScript library for reading and writing Excel files in XLSB 
 - **Streaming Support** — Efficient memory usage for large files
 - **Multiple Sheets** — Support for multiple worksheets per workbook
 - **Auto-filter** — Automatic filter headers support
+- **In-place Updates** — Replace the data of a worksheet inside an existing XLSX or XLSB (e.g. `report.xlsx` / `report.xlsb`) while keeping pivot tables, other sheets and formatting untouched
 
 ## Benchmark Results
 
@@ -201,6 +202,46 @@ await xlsbReader.open('data.xlsb');
 // ... same API as above
 ```
 
+### Updating Data in an Existing Workbook
+
+`XlsxUpdater` and `XlsbUpdater` replace the cell data of a worksheet inside an
+existing workbook without rebuilding it. Everything else — pivot tables, charts,
+other sheets, styles, defined names — is preserved, so you can keep an advanced
+Excel file (like a report with pivot tables wired to a data sheet) and only
+refresh its data:
+
+```typescript
+import { XlsxUpdater, XlsbUpdater } from '@justybase/spreadsheet-tasks';
+
+// XLSX
+const xlsx = new XlsxUpdater('report.xlsx');
+xlsx.replaceSheetData('data1', rows, { headers: ['ID', 'NAME', 'AMOUNT'] });
+xlsx.save();                 // overwrite in place, or xlsx.save('report_new.xlsx')
+
+// XLSB — the same API
+const xlsb = new XlsbUpdater('report.xlsb');
+xlsb.replaceSheetData('data1', rows, { headers: ['ID', 'NAME', 'AMOUNT'] });
+xlsb.save('report_new.xlsb');
+```
+
+**What happens under the hood:**
+
+- The target sheet's cell data is cleared and replaced with the new rows.
+- New strings are appended to the shared strings table (existing entries and
+  their indices are never moved, so other sheets stay valid).
+- New cells reuse the dominant style of their column from the original data
+  (dates stay dates, numbers stay numbers). Pass `styleFallback: 'general'`
+  to write everything as General.
+- Pivot tables whose cache source is the updated sheet get their source range
+  and record count adjusted, and `refreshOnLoad` is enabled so Excel refreshes
+  them automatically on open.
+
+> **Tip:** always pass the `headers` matching the original columns. When
+> `headers` are omitted, the first data row lands in row 1 and becomes the
+> pivot's field names (Excel reads the first row of the source range as
+> headers), so the pivot's columns would be replaced by the first record's
+> values.
+
 ## API Documentation
 
 See [API Documentation](./docs/API.md) for detailed API reference.
@@ -212,6 +253,7 @@ Check out the [examples](./examples) folder for more usage examples:
 - [Basic Write](./examples/basic-write.ts) — Writing data to Excel files
 - [Basic Read](./examples/basic-read.ts) — Reading data from Excel files
 - [Multiple Sheets](./examples/multiple-sheets.ts) — Working with multiple worksheets
+- [Update Existing Workbook](./examples/update-existing.ts) — Replacing the data of a sheet in an existing XLSX/XLSB with pivot tables
 - [Large Dataset](./examples/large-dataset.ts) — Handling large datasets efficiently
 - [Streaming Example](./examples/streaming-example.ts) — Write millions of rows without loading all data in memory
 

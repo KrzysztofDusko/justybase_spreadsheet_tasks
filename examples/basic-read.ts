@@ -7,7 +7,7 @@
  * Run with: npx ts-node examples/basic-read.ts
  */
 
-import { XlsbReader, XlsxReader, ReaderFactory } from '../dist';
+import { XlsbReader, XlsxReader, ReaderFactory } from '../dist/cjs';
 import * as path from 'path';
 
 async function readXlsbExample() {

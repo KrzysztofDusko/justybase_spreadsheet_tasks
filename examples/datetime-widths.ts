@@ -8,7 +8,7 @@
  * Run with: npx ts-node examples/datetime-widths.ts
  */
 
-import { XlsbWriter, XlsxWriter } from '../dist';
+import { XlsbWriter, XlsxWriter } from '../dist/cjs';
 import * as path from 'path';
 import * as fs from 'fs';
 

@@ -12,6 +12,12 @@ export { ReaderFactory } from './ReaderFactory';
 export { XlsbWriter } from './XlsbWriter';
 export { XlsxWriter } from './XlsxWriter';
 
+// Updater (in-place update of an existing workbook)
+export { XlsxUpdater } from './XlsxUpdater';
+export type { ReplaceSheetDataOptions } from './XlsxUpdater';
+export { XlsbUpdater } from './XlsbUpdater';
+export type { ReplaceSheetDataOptions as XlsbReplaceSheetDataOptions } from './XlsbUpdater';
+
 // Formatting
 export {
     FormattedCell,

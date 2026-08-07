@@ -7,7 +7,7 @@
  * Run with: npx ts-node examples/large-dataset.ts
  */
 
-import { XlsbWriter, XlsxWriter, XlsbReader, XlsxReader } from '../dist';
+import { XlsbWriter, XlsxWriter, XlsbReader, XlsxReader } from '../dist/cjs';
 import * as path from 'path';
 import * as fs from 'fs';
 

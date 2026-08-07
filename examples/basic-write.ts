@@ -7,7 +7,7 @@
  * Run with: npx ts-node examples/basic-write.ts
  */
 
-import { XlsbWriter, XlsxWriter } from '../dist';
+import { XlsbWriter, XlsxWriter } from '../dist/cjs';
 import * as path from 'path';
 import * as fs from 'fs';
 
