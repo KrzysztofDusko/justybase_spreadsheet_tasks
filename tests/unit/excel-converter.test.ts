@@ -122,16 +122,19 @@ async function run(): Promise<void> {
         'source file not found'
     );
 
+    const sourceFixture = path.join(outputDir, 'source.xlsb');
+    fs.writeFileSync(sourceFixture, 'source fixture');
+
     const existingDestination = path.join(outputDir, 'existing.xlsx');
     fs.writeFileSync(existingDestination, 'existing');
     await expectError(
-        () => convertXlsbToXlsx(path.join(repoRoot, 'data_formats.xlsb'), existingDestination),
+        () => convertXlsbToXlsx(sourceFixture, existingDestination),
         'destination already exists'
     );
 
     const missingDirectory = path.join(outputDir, 'missing-directory', 'output.xlsx');
     await expectError(
-        () => convertXlsbToXlsx(path.join(repoRoot, 'data_formats.xlsb'), missingDirectory),
+        () => convertXlsbToXlsx(sourceFixture, missingDirectory),
         'destination directory not found'
     );
 
