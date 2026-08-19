@@ -8,6 +8,7 @@
 - [XlsxReader](#xlsxreader)
 - [XlsxUpdater](#xlsxupdater)
 - [XlsbUpdater](#xlsbupdater)
+- [Excel conversion](#excel-conversion)
 - [ReaderFactory](#readerfactory)
 - [Types](#types)
 
@@ -381,6 +382,56 @@ file is overwritten in place.
 Returns the updated workbook as an in-memory ZIP buffer.
 
 ---
+
+## Excel conversion
+
+Excel conversion uses the installed desktop Microsoft Excel through COM. It is
+available in the Node.js build on Windows only; the browser build does not
+expose these functions.
+
+### `ExcelConversionOptions`
+
+```typescript
+interface ExcelConversionOptions {
+    overwrite?: boolean;
+}
+```
+
+`overwrite` defaults to `false`. Existing destination files are rejected unless
+it is explicitly set to `true`.
+
+### `convertXlsbToXlsx`
+
+```typescript
+convertXlsbToXlsx(
+    inputPath: string,
+    outputPath: string,
+    options?: ExcelConversionOptions
+): Promise<void>
+```
+
+Converts an existing `.xlsb` file to `.xlsx` using Excel `SaveAs` format 51.
+
+### `convertXlsxToXlsb`
+
+```typescript
+convertXlsxToXlsb(
+    inputPath: string,
+    outputPath: string,
+    options?: ExcelConversionOptions
+): Promise<void>
+```
+
+Converts an existing `.xlsx` file to `.xlsb` using Excel `SaveAs` format 50.
+
+Both functions reject invalid extensions, missing files, protected
+destinations, unavailable COM automation, and Excel errors. The source is
+opened read-only and the destination is first written to a temporary file.
+
+```typescript
+await convertXlsbToXlsx('report.xlsb', 'report.xlsx');
+await convertXlsxToXlsb('report.xlsx', 'report.xlsb', { overwrite: true });
+```
 
 ## ReaderFactory
 

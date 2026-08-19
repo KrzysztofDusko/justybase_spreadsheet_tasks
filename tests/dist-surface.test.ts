@@ -17,6 +17,8 @@ const required = [
     'StreamingSheetState',
     'XlsxUpdater',
     'XlsbUpdater',
+    'convertXlsbToXlsx',
+    'convertXlsxToXlsb',
 ];
 
 let failed = 0;

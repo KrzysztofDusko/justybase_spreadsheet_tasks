@@ -18,6 +18,13 @@ export type { ReplaceSheetDataOptions } from './XlsxUpdater';
 export { XlsbUpdater } from './XlsbUpdater';
 export type { ReplaceSheetDataOptions as XlsbReplaceSheetDataOptions } from './XlsbUpdater';
 
+// Excel COM conversion (Node.js + Windows + desktop Microsoft Excel)
+export {
+    convertXlsbToXlsx,
+    convertXlsxToXlsb,
+} from './ExcelConverter';
+export type { ExcelConversionOptions } from './ExcelConverter';
+
 // Formatting
 export {
     FormattedCell,

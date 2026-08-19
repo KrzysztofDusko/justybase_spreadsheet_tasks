@@ -31,6 +31,7 @@ High-performance TypeScript library for reading and writing Excel files in XLSB 
 - **Streaming Support** — Efficient memory usage for large files
 - **Multiple Sheets** — Support for multiple worksheets per workbook
 - **Auto-filter** — Automatic filter headers support
+- **Excel COM Conversion** — Convert XLSB and XLSX through desktop Microsoft Excel on Windows
 - **In-place Updates** — Replace the data of a worksheet inside an existing XLSX or XLSB (e.g. `report.xlsx` / `report.xlsb`) while keeping pivot tables, other sheets and formatting untouched
 
 ## Benchmark Results
@@ -46,6 +47,7 @@ Measured with `npm run benchmark` (50K rows). Your results may vary by hardware 
 ## Requirements
 
 - **Node.js** 16 or newer ([`engines`](./package.json) in `package.json`)
+- XLSB/XLSX conversion additionally requires Windows, PowerShell and desktop Microsoft Excel with COM automation
 
 ## Installation
 
@@ -241,6 +243,30 @@ xlsb.save('report_new.xlsb');
 > pivot's field names (Excel reads the first row of the source range as
 > headers), so the pivot's columns would be replaced by the first record's
 > values.
+
+### Converting XLSB and XLSX with Excel
+
+On Windows, existing workbooks can be converted by asking the installed desktop
+Microsoft Excel to perform `SaveAs` through COM. The source file is opened
+read-only and the destination is written separately:
+
+```typescript
+import {
+    convertXlsbToXlsx,
+    convertXlsxToXlsb,
+} from '@justybase/spreadsheet-tasks';
+
+await convertXlsbToXlsx('report.xlsb', 'report.xlsx');
+await convertXlsxToXlsb('report.xlsx', 'report.xlsb');
+
+// Existing destinations are protected by default.
+await convertXlsbToXlsx('report.xlsb', 'report.xlsx', { overwrite: true });
+```
+
+Conversion is a Node.js-only API and requires Windows plus desktop Microsoft
+Excel. Unsupported files, unavailable COM automation, and Excel conversion
+errors are reported as rejected promises. VBA/macros are not guaranteed when
+the target format does not support them.
 
 ## API Documentation
 

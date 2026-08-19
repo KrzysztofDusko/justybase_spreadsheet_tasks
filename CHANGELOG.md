@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `convertXlsbToXlsx` and `convertXlsxToXlsb` — Windows/Excel COM conversions
+  with protected destinations and optional explicit overwriting.
+
+### Fixed
+
+- Destination replacement during Excel conversion now preserves files created
+  concurrently and rolls back safely when the final rename fails.
+
 ## [2.1.0] - 2026-08-07
 
 ### Added
