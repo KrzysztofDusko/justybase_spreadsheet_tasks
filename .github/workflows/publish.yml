@@ -3,6 +3,12 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version to publish (for example, 2.1.1)
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -31,9 +37,13 @@ jobs:
         shell: bash
         run: |
           package_version=$(node -p "require('./package.json').version")
-          release_version="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            release_version="${GITHUB_REF_NAME#v}"
+          else
+            release_version="${{ inputs.version }}"
+          fi
           if [ "$package_version" != "$release_version" ]; then
-            echo "Package version $package_version does not match release tag $GITHUB_REF_NAME"
+            echo "Package version $package_version does not match requested release version $release_version"
             exit 1
           fi
 
