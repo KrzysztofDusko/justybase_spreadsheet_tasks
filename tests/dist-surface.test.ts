@@ -16,6 +16,7 @@ const required = [
     'sanitizeSheetName',
     'StreamingSheetState',
     'XlsxUpdater',
+    'XlsmUpdater',
     'XlsbUpdater',
     'convertXlsbToXlsx',
     'convertXlsxToXlsb',

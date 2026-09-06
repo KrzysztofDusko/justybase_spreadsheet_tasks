@@ -32,7 +32,7 @@ High-performance TypeScript library for reading and writing Excel files in XLSB 
 - **Multiple Sheets** — Support for multiple worksheets per workbook
 - **Auto-filter** — Automatic filter headers support
 - **Excel COM Conversion** — Convert XLSB and XLSX through desktop Microsoft Excel on Windows
-- **In-place Updates** — Replace the data of a worksheet inside an existing XLSX or XLSB (e.g. `report.xlsx` / `report.xlsb`) while keeping pivot tables, other sheets and formatting untouched
+- **In-place Updates** — Replace the data of a worksheet inside an existing XLSX, XLSM or XLSB while keeping pivot tables, other sheets and formatting untouched
 
 ## Benchmark Results
 
@@ -213,7 +213,7 @@ Excel file (like a report with pivot tables wired to a data sheet) and only
 refresh its data:
 
 ```typescript
-import { XlsxUpdater, XlsbUpdater } from '@justybase/spreadsheet-tasks';
+import { XlsxUpdater, XlsbUpdater, XlsmUpdater } from '@justybase/spreadsheet-tasks';
 
 // XLSX
 const xlsx = new XlsxUpdater('report.xlsx');
@@ -224,7 +224,25 @@ xlsx.save();                 // overwrite in place, or xlsx.save('report_new.xls
 const xlsb = new XlsbUpdater('report.xlsb');
 xlsb.replaceSheetData('data1', rows, { headers: ['ID', 'NAME', 'AMOUNT'] });
 xlsb.save('report_new.xlsb');
+
+// XLSM uses the XLSX updater and keeps opaque VBA parts intact.
+const xlsm = new XlsmUpdater('report.xlsm');
+xlsm.replaceSheetData('data1', rows, { headers: ['ID', 'NAME', 'AMOUNT'] });
+xlsm.save('report_new.xlsm');
 ```
+
+For a result set that should not be collected into a 2D array, use the additive
+streaming API. It accepts either a synchronous iterable or an async iterable and
+writes the final ZIP through a temporary file before installing it atomically:
+
+```typescript
+const updater = new XlsxUpdater('large-report.xlsx');
+await updater.replaceSheetDataStream('data1', databaseRows(), { headers });
+await updater.saveStreaming('large-report-updated.xlsx');
+```
+
+`save()` remains available for the existing synchronous API. Both save methods
+replace their destination atomically after a successful write.
 
 **What happens under the hood:**
 

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { randomUUID } from 'crypto';
 
 /** Internal file operations seam used to test replacement races without Excel. */
@@ -21,6 +22,15 @@ function destinationExistsError(destinationPath: string): Error {
     return new Error(
         `Excel conversion: destination already exists (pass { overwrite: true } to replace it): ${destinationPath}`
     );
+}
+
+function readDestinationMode(target: string): number | undefined {
+    try {
+        if (!fs.existsSync(target)) return undefined;
+        return fs.statSync(target).mode & 0o777;
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -90,5 +100,52 @@ export function installTemporaryOutput(
         }
 
         throw error;
+    }
+}
+
+/**
+ * Write a complete buffer through a same-directory temporary file and replace
+ * the destination only after the write has completed successfully.
+ */
+export function writeBufferAtomically(buffer: Buffer, destinationPath: string): void {
+    const target = path.resolve(destinationPath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const temporaryPath = path.join(
+        path.dirname(target),
+        `.${path.basename(target)}.${randomUUID()}.tmp`
+    );
+    const destinationMode = readDestinationMode(target);
+
+    try {
+        const fd = fs.openSync(temporaryPath, 'w', destinationMode ?? 0o666);
+        try {
+            if (destinationMode !== undefined) {
+                try {
+                    fs.fchmodSync(fd, destinationMode);
+                } catch {
+                    // Preserve the original write error; mode is best-effort.
+                }
+            }
+            fs.writeFileSync(fd, buffer);
+            fs.fsyncSync(fd);
+        } finally {
+            fs.closeSync(fd);
+        }
+        if (destinationMode !== undefined) {
+            try {
+                fs.chmodSync(temporaryPath, destinationMode);
+            } catch {
+                // Preserve the original write/rename error.
+            }
+        }
+        fs.renameSync(temporaryPath, target);
+    } finally {
+        if (fs.existsSync(temporaryPath)) {
+            try {
+                fs.rmSync(temporaryPath);
+            } catch {
+                // Preserve the original write/rename error.
+            }
+        }
     }
 }

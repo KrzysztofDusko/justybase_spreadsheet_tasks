@@ -7,6 +7,7 @@
 - [XlsbReader](#xlsbreader)
 - [XlsxReader](#xlsxreader)
 - [XlsxUpdater](#xlsxupdater)
+- [XlsmUpdater](#xlsmupdater)
 - [XlsbUpdater](#xlsbupdater)
 - [Excel conversion](#excel-conversion)
 - [ReaderFactory](#readerfactory)
@@ -244,8 +245,9 @@ new XlsxUpdater(filePath: string)
 **Parameters:**
 - `filePath` - Path to an existing `.xlsx` file
 
-Throws if the file does not exist, is not a valid XLSX, or is an XLSB
-(XLSB updates are not supported yet).
+Throws if the file does not exist, is not a valid XLSX package, or is an XLSB.
+Macro-enabled `.xlsm` packages can use the explicit [XlsmUpdater](#xlsmupdater)
+alias; unknown VBA members are preserved.
 
 **Example:**
 ```typescript
@@ -299,9 +301,27 @@ updater.save('report_new.xlsx');
 Writes the updated workbook to disk. When `outputPath` is omitted, the source
 file is overwritten in place.
 
+#### `replaceSheetDataStream(sheetName: string, rows: RowSource, options?: ReplaceSheetDataOptions): Promise<void>`
+
+Replaces worksheet rows from a synchronous or asynchronous one-pass row source.
+The row source is processed incrementally and is not collected into a complete
+2D array. Use `saveStreaming()` to also avoid materialising the final ZIP buffer.
+
+#### `saveStreaming(outputPath?: string): Promise<void>`
+
+Writes the updated package through a temporary file and installs it atomically.
+Staged worksheet parts are streamed; `save()` remains the simpler synchronous
+buffering path.
+
 #### `toBuffer(): Buffer`
 
 Returns the updated workbook as an in-memory ZIP buffer.
+
+## XlsmUpdater
+
+`XlsmUpdater` is an explicit alias of `XlsxUpdater` for macro-enabled `.xlsm`
+packages. It has the same API as `XlsxUpdater` and preserves VBA parts without
+parsing or modifying them.
 
 ---
 
@@ -468,6 +488,16 @@ await reader.open('data.xlsb');
 | `boolean` | Boolean |
 | `Date` | Date Serial Number |
 | `null` / `undefined` | Empty Cell |
+
+### `RowSource`
+
+```typescript
+type RowSource =
+  | Iterable<ReadonlyArray<CellValue>>
+  | AsyncIterable<ReadonlyArray<CellValue>>;
+```
+
+Used by `replaceSheetDataStream()` in both updater classes.
 
 ### Sheet Name Restrictions
 

@@ -11,11 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `convertXlsbToXlsx` and `convertXlsxToXlsb` — Windows/Excel COM conversions
   with protected destinations and optional explicit overwriting.
+- `replaceSheetDataStream()` and `saveStreaming()` for XLSX/XLSB updaters,
+  accepting synchronous or asynchronous row sources without collecting the
+  complete result set in memory.
+- `XlsmUpdater` as an explicit alias for `XlsxUpdater`; VBA package members are
+  preserved as opaque ZIP parts.
 
 ### Fixed
 
 - Destination replacement during Excel conversion now preserves files created
   concurrently and rolls back safely when the final rename fails.
+- Shared-string `count` values now reflect the replaced worksheet rather than
+  accumulating stale references across repeated updates. Pending strings are
+  committed only once.
+- Updater saves now install the destination atomically through a same-directory
+  temporary file.
 
 ## [2.1.0] - 2026-08-07
 

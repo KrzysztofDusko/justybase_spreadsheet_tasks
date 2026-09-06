@@ -45,7 +45,9 @@ export function escapeXmlText(str: string): string {
 /** Unescape the five predefined XML entities. */
 export function unescapeXml(str: string): string {
     if (!str || str.indexOf('&') === -1) return str;
-    return str.replace(/&amp;/g, '&')
+    return str.replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (_match, decimal: string) => String.fromCodePoint(parseInt(decimal, 10)))
+        .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')
@@ -93,30 +95,17 @@ export function trimTrailingEmptyRows<T>(rows: T[][]): T[][] {
  */
 export function parseSharedStringsXml(xml: string): string[] {
     const result: string[] = [];
-    let pos = 0;
-    while (true) {
-        const siStart = xml.indexOf('<si>', pos);
-        if (siStart === -1) break;
-
-        const siEnd = xml.indexOf('</si>', siStart);
-        if (siEnd === -1) break;
-
-        const content = xml.substring(siStart, siEnd);
-        let val = '';
-        let tPos = 0;
-        while (true) {
-            const tStart = content.indexOf('<t', tPos);
-            if (tStart === -1) break;
-            const tagEnd = content.indexOf('>', tStart);
-            const tEnd = content.indexOf('</t>', tagEnd);
-            if (tEnd === -1) break;
-
-            val += content.substring(tagEnd + 1, tEnd);
-            tPos = tEnd + 4;
+    const itemRegex = /<(?:(?:[A-Za-z_][\w.-]*):)?si\b[^>]*>([\s\S]*?)<\/(?:(?:[A-Za-z_][\w.-]*):)?si\s*>/gi;
+    let itemMatch: RegExpExecArray | null;
+    while ((itemMatch = itemRegex.exec(xml)) !== null) {
+        const content = itemMatch[1];
+        const textRegex = /<(?:(?:[A-Za-z_][\w.-]*):)?t\b[^>]*>([\s\S]*?)<\/(?:(?:[A-Za-z_][\w.-]*):)?t\s*>/gi;
+        let value = '';
+        let textMatch: RegExpExecArray | null;
+        while ((textMatch = textRegex.exec(content)) !== null) {
+            value += textMatch[1];
         }
-
-        result.push(unescapeXml(val));
-        pos = siEnd + 5;
+        result.push(unescapeXml(value));
     }
     return result;
 }

@@ -1,6 +1,10 @@
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import AdmZip from 'adm-zip';
 import { CellValue, getFormat, unwrapCell } from './Formats';
+import { writeBufferAtomically } from './atomicFile';
+import { writeAdmZipStreaming, StagedZipPart } from './streamingZip';
 import {
     readRecord,
     buildRecord,
@@ -29,6 +33,11 @@ export interface ReplaceSheetDataOptions {
     styleFallback?: 'inherit' | 'general';
 }
 
+/** A one-pass synchronous or asynchronous source of worksheet rows. */
+export type RowSource =
+    | Iterable<ReadonlyArray<CellValue>>
+    | AsyncIterable<ReadonlyArray<CellValue>>;
+
 /** Worksheet cell records (BrtCellBlank … BrtFmlaError). */
 const CELL_RECORDS = new Set<number>([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b]);
 
@@ -50,6 +59,8 @@ const RK_INT_UPPER = (1 << 29) - 1;
 export class XlsbUpdater {
     private readonly zip: AdmZip;
     private readonly sourcePath: string;
+    private temporaryDirectory: string | null = null;
+    private readonly stagedParts: StagedZipPart = new Map();
 
     private sheetNameToPath: Map<string, string> = new Map();
     private pivotCacheDefPaths: string[] = [];
@@ -60,21 +71,22 @@ export class XlsbUpdater {
     private sharedStringsUnique: number = 0;
     private sharedStringsEndSst: number = 0;
     private stringIndexMap: Map<string, number> = new Map();
+    private sharedStringsDirty: boolean = false;
 
     private readonly _oaEpoch: number;
 
     /**
      * @param path Path to an existing `.xlsb` file.
      */
-    constructor(path: string) {
-        this.sourcePath = path;
+    constructor(filePath: string) {
+        this.sourcePath = filePath;
         this._oaEpoch = Date.UTC(1899, 11, 30);
 
-        if (!fs.existsSync(path)) {
-            throw new Error(`XlsbUpdater: file not found: ${path}`);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`XlsbUpdater: file not found: ${filePath}`);
         }
 
-        this.zip = new AdmZip(path);
+        this.zip = new AdmZip(filePath);
 
         if (!this.zip.getEntry('xl/workbook.bin')) {
             throw new Error(
@@ -116,8 +128,15 @@ export class XlsbUpdater {
             throw new Error(`XlsbUpdater: worksheet part missing for sheet "${sheetName}".`);
         }
 
-        const sheetBuf = entry.getData();
+        const sheetBuf = this._entryData(sheetPath);
         this._ensureSharedStringsLoaded();
+        if (this.sharedStringsBuf !== null) {
+            this.sharedStringsTotal = Math.max(
+                0,
+                this.sharedStringsTotal - this._sharedStringRefCount(sheetBuf),
+            );
+            this.sharedStringsDirty = true;
+        }
 
         let dataStyles: Map<number, number> = new Map();
         let headerStyles: Map<number, number> = new Map();
@@ -157,8 +176,9 @@ export class XlsbUpdater {
         this._patchDimension(newSheet, lastRowIdx, lastCol);
 
         this.zip.updateFile(sheetPath, newSheet);
+        this._discardStagedPart(sheetPath);
 
-        if (this.sharedStringsBuf !== null && this._appendCount > 0) {
+        if (this.sharedStringsBuf !== null) {
             this._commitSharedStrings();
         }
 
@@ -167,18 +187,334 @@ export class XlsbUpdater {
         this._patchPivotCaches(sheetName, rwLast, colLast);
     }
 
+    /** Replace worksheet rows from a one-pass source. */
+    async replaceSheetDataStream(
+        sheetName: string,
+        rows: RowSource,
+        options: ReplaceSheetDataOptions = {},
+    ): Promise<void> {
+        const { headers, styleFallback = 'inherit' } = options;
+        if (styleFallback !== 'inherit' && styleFallback !== 'general') {
+            throw new Error("XlsbUpdater: styleFallback must be 'inherit' or 'general'.");
+        }
+
+        const sheetPath = this.sheetNameToPath.get(sheetName);
+        if (!sheetPath) {
+            throw new Error(`XlsbUpdater: sheet "${sheetName}" not found in the workbook.`);
+        }
+        const entry = this.zip.getEntry(sheetPath);
+        if (!entry) {
+            throw new Error(`XlsbUpdater: worksheet part missing for sheet "${sheetName}".`);
+        }
+
+        const oldStage = this.stagedParts.get(sheetPath);
+        const beforeValuesLength = this.sharedStringsValues.length;
+        const beforeAppendCount = this._appendCount;
+        const beforeSharedStringsTotal = this.sharedStringsTotal;
+        const beforeSharedStringsUnique = this.sharedStringsUnique;
+        const beforeSharedStringsEndSst = this.sharedStringsEndSst;
+        const beforeSharedStringsDirty = this.sharedStringsDirty;
+        const beforeStringIndexMap = new Map(this.stringIndexMap);
+        const sharedStringsEntry = this.zip.getEntry('xl/sharedStrings.bin');
+        const beforeSharedStringsBytes = sharedStringsEntry || this.stagedParts.has('xl/sharedStrings.bin')
+            ? Buffer.from(this._entryData('xl/sharedStrings.bin'))
+            : null;
+        const beforeSharedStringsBuf = this.sharedStringsBuf ? Buffer.from(this.sharedStringsBuf) : null;
+        const oldSheet = this._entryData(sheetPath);
+        const rowsPath = this._temporaryPath('.rows');
+        const outputPath = this._temporaryPath('.bin');
+        const createdParts = [rowsPath, outputPath];
+        let output: fs.WriteStream | null = null;
+
+        try {
+            this._ensureSharedStringsLoaded();
+            if (this.sharedStringsBuf !== null) {
+                this.sharedStringsTotal = Math.max(
+                    0,
+                    this.sharedStringsTotal - this._sharedStringRefCount(oldSheet),
+                );
+                this.sharedStringsDirty = true;
+            }
+
+            let dataStyles = new Map<number, number>();
+            let headerStyles = new Map<number, number>();
+            let dateXf: number | null = null;
+            if (styleFallback !== 'general') {
+                const collected = this._collectStyles(oldSheet);
+                dataStyles = collected.dataStyles;
+                headerStyles = collected.headerStyles;
+                dateXf = this._findDateXf();
+            }
+
+            const rowOutput = fs.createWriteStream(rowsPath);
+            output = rowOutput;
+            let outputError: Error | null = null;
+            rowOutput.on('error', error => { outputError = error; });
+            let writtenBytes = 0;
+            let lastKeptEnd = 0;
+            let width = headers?.length ?? 0;
+            let dataRowsSeen = 0;
+            let keptDataRows = 0;
+            let pendingEmptyWidth = 0;
+            let nextRow = 0;
+            const rowHeaderOffsets: number[] = [];
+
+            const write = async (data: Buffer): Promise<void> => {
+                if (outputError) throw outputError;
+                writtenBytes += data.length;
+                if (rowOutput.write(data)) return;
+                await new Promise<void>((resolve, reject) => {
+                    const onDrain = () => { cleanup(); resolve(); };
+                    const onError = (error: Error) => { cleanup(); reject(error); };
+                    const cleanup = () => {
+                        rowOutput.off('drain', onDrain);
+                        rowOutput.off('error', onError);
+                    };
+                    rowOutput.once('drain', onDrain);
+                    rowOutput.once('error', onError);
+                });
+            };
+
+            const writeRow = async (rowNumber: number, cells: Buffer[]): Promise<void> => {
+                rowHeaderOffsets.push(writtenBytes);
+                const header = Buffer.alloc(27);
+                header[0] = 0x00;
+                header[1] = 25;
+                header.writeInt32LE(rowNumber, 2);
+                header[10] = 0x2c;
+                header[11] = 0x01;
+                header[15] = 0x01;
+                header.writeInt32LE(0, 19);
+                header.writeInt32LE(0, 23);
+                await write(header);
+                for (const cell of cells) await write(cell);
+            };
+
+            if (headers !== undefined) {
+                await writeRow(0, headers.map((value, column) =>
+                    this._stringCellBytes(column, styleFallback === 'general' ? 0 : (headerStyles.get(column) ?? 0), value)));
+                lastKeptEnd = writtenBytes;
+                nextRow = 1;
+            }
+
+            for await (const sourceRow of rows) {
+                if (typeof sourceRow === 'string' || sourceRow instanceof Uint8Array) {
+                    throw new TypeError('Each row must be an iterable of cells, not text');
+                }
+                const row = Array.from(sourceRow) as CellValue[];
+                const cells = row
+                    .map((value, column) => value === null || value === undefined
+                        ? null
+                        : this._valueCellBytes(value, column, dataStyles, dateXf))
+                    .filter((cell): cell is Buffer => cell !== null);
+                await writeRow(nextRow, cells);
+                dataRowsSeen++;
+                nextRow++;
+
+                if (row.every(value => value === null || value === undefined)) {
+                    pendingEmptyWidth = Math.max(pendingEmptyWidth, row.length);
+                } else {
+                    width = Math.max(width, pendingEmptyWidth, row.length);
+                    pendingEmptyWidth = 0;
+                    keptDataRows = dataRowsSeen;
+                    lastKeptEnd = writtenBytes;
+                }
+            }
+
+            await new Promise<void>((resolve, reject) => {
+                rowOutput.once('close', resolve);
+                rowOutput.once('error', reject);
+                rowOutput.end();
+            });
+            if (outputError) throw outputError;
+
+            const rowsFd = fs.openSync(rowsPath, 'r+');
+            try {
+                fs.ftruncateSync(rowsFd, lastKeptEnd);
+            } finally {
+                fs.closeSync(rowsFd);
+            }
+            const lastCol = Math.max(0, width - 1);
+            const rowPatchFd = fs.openSync(rowsPath, 'r+');
+            try {
+                const lastColBuffer = Buffer.alloc(4);
+                lastColBuffer.writeInt32LE(lastCol, 0);
+                for (const offset of rowHeaderOffsets) {
+                    if (offset >= lastKeptEnd) continue;
+                    fs.writeSync(rowPatchFd, lastColBuffer, 0, lastColBuffer.length, offset + 23);
+                }
+            } finally {
+                fs.closeSync(rowPatchFd);
+            }
+
+            const { rowsStart, rowsEnd, autoFilterRanges } = this._findRowsRegion(oldSheet);
+            const oldLength = oldSheet.length;
+            const newRowsLength = fs.statSync(rowsPath).size;
+            const delta = newRowsLength - (rowsEnd - rowsStart);
+            const outputFd = fs.openSync(outputPath, 'w');
+            try {
+                fs.writeSync(outputFd, oldSheet, 0, rowsStart, null);
+                const rowsFdRead = fs.openSync(rowsPath, 'r');
+                try {
+                    const chunk = Buffer.alloc(1024 * 1024);
+                    let position = 0;
+                    while (position < newRowsLength) {
+                        const count = fs.readSync(rowsFdRead, chunk, 0, Math.min(chunk.length, newRowsLength - position), position);
+                        if (count <= 0) throw new Error('XlsbUpdater: failed to read staged rows.');
+                        fs.writeSync(outputFd, chunk, 0, count);
+                        position += count;
+                    }
+                } finally {
+                    fs.closeSync(rowsFdRead);
+                }
+                fs.writeSync(outputFd, oldSheet, rowsEnd, oldLength - rowsEnd, rowsStart + newRowsLength);
+            } finally {
+                fs.closeSync(outputFd);
+            }
+
+            this._patchSheetMetadataFile(
+                outputPath,
+                oldSheet,
+                rowsEnd,
+                delta,
+                autoFilterRanges,
+                Math.max(0, keptDataRows + (headers !== undefined ? 1 : 0) - 1),
+                lastCol,
+            );
+            this._stagePart(sheetPath, outputPath);
+            this._commitSharedStrings();
+            this._patchPivotCaches(
+                sheetName,
+                Math.max(0, keptDataRows + (headers !== undefined ? 1 : 0) - 1),
+                lastCol,
+            );
+
+            if (oldStage && oldStage !== outputPath) this._removeTemporaryFile(oldStage);
+            createdParts.splice(createdParts.indexOf(outputPath), 1);
+        } catch (error) {
+            this.sharedStringsValues.length = beforeValuesLength;
+            this._appendCount = beforeAppendCount;
+            this.sharedStringsTotal = beforeSharedStringsTotal;
+            this.sharedStringsUnique = beforeSharedStringsUnique;
+            this.sharedStringsEndSst = beforeSharedStringsEndSst;
+            this.sharedStringsDirty = beforeSharedStringsDirty;
+            this.sharedStringsBuf = beforeSharedStringsBuf;
+            this.stringIndexMap.clear();
+            for (const [value, index] of beforeStringIndexMap) this.stringIndexMap.set(value, index);
+            if (beforeSharedStringsBytes) {
+                this.zip.updateFile('xl/sharedStrings.bin', beforeSharedStringsBytes);
+            }
+            if (oldStage) this.stagedParts.set(sheetPath, oldStage);
+            else this.stagedParts.delete(sheetPath);
+            throw error;
+        } finally {
+            if (output && !output.closed) output.destroy();
+            for (const temporaryPath of createdParts) this._removeTemporaryFile(temporaryPath);
+        }
+    }
+
     /**
      * Write the updated workbook to disk.
      * @param outputPath Destination path; defaults to the source file (overwrites in place).
      */
     save(outputPath?: string): void {
         const target = outputPath ?? this.sourcePath;
-        fs.writeFileSync(target, this.zip.toBuffer());
+        this._materializeStagedParts();
+        writeBufferAtomically(this.zip.toBuffer(), target);
+    }
+
+    /** Save staged streaming replacements without materialising the ZIP. */
+    async saveStreaming(outputPath?: string): Promise<void> {
+        const target = outputPath ?? this.sourcePath;
+        await writeAdmZipStreaming(this.zip, this.stagedParts, target);
+        this._materializeStagedParts();
     }
 
     /** The updated workbook as an in-memory ZIP buffer. */
     toBuffer(): Buffer {
+        this._materializeStagedParts();
         return this.zip.toBuffer();
+    }
+
+    /**
+     * Release the staging directory and any unsaved staged parts.
+     * The updater remains usable; a new staging directory is created lazily
+     * on the next streaming replacement.
+     */
+    dispose(): void {
+        for (const stagedPath of this.stagedParts.values()) {
+            try {
+                fs.rmSync(stagedPath, { force: true });
+            } catch {
+                // Best-effort cleanup.
+            }
+        }
+        this.stagedParts.clear();
+        if (this.temporaryDirectory !== null) {
+            try {
+                fs.rmSync(this.temporaryDirectory, { recursive: true, force: true });
+            } catch {
+                // Best-effort cleanup.
+            }
+            this.temporaryDirectory = null;
+        }
+    }
+
+    /** Support `using` declarations for automatic staging cleanup. */
+    [Symbol.dispose](): void {
+        this.dispose();
+    }
+
+    private _ensureTemporaryDirectory(): string {
+        if (this.temporaryDirectory === null) {
+            this.temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'spreadsheet-updater-'));
+        } else {
+            try {
+                fs.mkdirSync(this.temporaryDirectory, { recursive: true });
+            } catch {
+                // Best-effort; file creation will surface persistent failures.
+            }
+        }
+        return this.temporaryDirectory;
+    }
+
+    private _temporaryPath(suffix: string): string {
+        return path.join(this._ensureTemporaryDirectory(), `part-${Date.now()}-${Math.random().toString(16).slice(2)}${suffix}`);
+    }
+
+    private _removeTemporaryFile(filePath: string): void {
+        try {
+            fs.rmSync(filePath);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+    }
+
+    private _entryData(name: string): Buffer {
+        const stagedPath = this.stagedParts.get(name);
+        if (stagedPath) return fs.readFileSync(stagedPath);
+        const entry = this.zip.getEntry(name);
+        if (!entry) throw new Error(`XlsbUpdater: ZIP member missing: ${name}`);
+        return entry.getData();
+    }
+
+    private _stagePart(name: string, filePath: string): void {
+        this.stagedParts.set(name, filePath);
+    }
+
+    private _discardStagedPart(name: string): void {
+        const stagedPath = this.stagedParts.get(name);
+        if (!stagedPath) return;
+        this._removeTemporaryFile(stagedPath);
+        this.stagedParts.delete(name);
+    }
+
+    private _materializeStagedParts(): void {
+        for (const [name, stagedPath] of this.stagedParts) {
+            this.zip.updateFile(name, fs.readFileSync(stagedPath));
+            this._removeTemporaryFile(stagedPath);
+        }
+        this.stagedParts.clear();
     }
 
     // ------------------------------------------------------------------
@@ -243,11 +579,11 @@ export class XlsbUpdater {
             return;
         }
         const entry = this.zip.getEntry('xl/sharedStrings.bin');
-        if (!entry) {
+        if (!entry && !this.stagedParts.has('xl/sharedStrings.bin')) {
             this.sharedStringsBuf = null;
             return;
         }
-        this.sharedStringsBuf = entry.getData();
+        this.sharedStringsBuf = this._entryData('xl/sharedStrings.bin');
         const parsed = parseSharedStringsBin(this.sharedStringsBuf);
         this.sharedStringsValues = parsed.values;
         this.sharedStringsTotal = parsed.total;
@@ -260,10 +596,11 @@ export class XlsbUpdater {
             }
         });
         this._appendCount = 0;
+        this.sharedStringsDirty = false;
     }
 
     private _commitSharedStrings(): void {
-        if (this.sharedStringsBuf === null || this._appendCount === 0) return;
+        if (this.sharedStringsBuf === null || !this.sharedStringsDirty) return;
 
         const originalValuesLength = this.sharedStringsValues.length - this._appendCount;
 
@@ -295,6 +632,9 @@ export class XlsbUpdater {
         }
 
         this.zip.updateFile('xl/sharedStrings.bin', out);
+        this.sharedStringsBuf = out;
+        this._appendCount = 0;
+        this.sharedStringsDirty = false;
     }
 
     // ------------------------------------------------------------------
@@ -511,12 +851,63 @@ export class XlsbUpdater {
             this._appendCount++;
         }
         this.sharedStringsTotal++;
+        this.sharedStringsDirty = true;
 
         const payload = Buffer.alloc(12);
         payload.writeUInt32LE(col, 0);
         payload.writeUInt32LE(style, 4);
         payload.writeUInt32LE(index, 8);
         return buildRecord(0x0007, payload);
+    }
+
+    private _sharedStringRefCount(sheetBuf: Buffer): number {
+        const rec: Biff12Record = { headerStart: 0, dataStart: 0, dataEnd: 0, id: 0, len: 0 };
+        let pos = 0;
+        let count = 0;
+        while (readRecord(sheetBuf, pos, rec)) {
+            if (rec.id === 0x0007) count++;
+            pos = rec.dataEnd;
+        }
+        return count;
+    }
+
+    private _patchSheetMetadataFile(
+        filePath: string,
+        originalSheet: Buffer,
+        rowsEnd: number,
+        delta: number,
+        autoFilterRanges: number[],
+        lastRowIdx: number,
+        lastCol: number,
+    ): void {
+        const fd = fs.openSync(filePath, 'r+');
+        try {
+            const patchInt32 = (offset: number, value: number): void => {
+                const bytes = Buffer.alloc(4);
+                bytes.writeInt32LE(value, 0);
+                fs.writeSync(fd, bytes, 0, bytes.length, offset);
+            };
+
+            for (const filterOffset of autoFilterRanges) {
+                const newOffset = filterOffset >= rowsEnd ? filterOffset + delta : filterOffset;
+                patchInt32(newOffset + 4, lastRowIdx);
+                patchInt32(newOffset + 12, lastCol);
+            }
+
+            const rec: Biff12Record = { headerStart: 0, dataStart: 0, dataEnd: 0, id: 0, len: 0 };
+            let pos = 0;
+            while (readRecord(originalSheet, pos, rec)) {
+                if (rec.id === 0x0098 && rec.len >= 36) {
+                    const shift = rec.dataStart >= rowsEnd ? delta : 0;
+                    patchInt32(rec.dataStart + shift + 24, lastRowIdx);
+                    patchInt32(rec.dataStart + shift + 32, lastCol);
+                    break;
+                }
+                pos = rec.dataEnd;
+            }
+        } finally {
+            fs.closeSync(fd);
+        }
     }
 
     // ------------------------------------------------------------------

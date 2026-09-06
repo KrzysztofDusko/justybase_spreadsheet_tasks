@@ -13,8 +13,8 @@ export { XlsbWriter } from './XlsbWriter';
 export { XlsxWriter } from './XlsxWriter';
 
 // Updater (in-place update of an existing workbook)
-export { XlsxUpdater } from './XlsxUpdater';
-export type { ReplaceSheetDataOptions } from './XlsxUpdater';
+export { XlsxUpdater, XlsmUpdater } from './XlsxUpdater';
+export type { ReplaceSheetDataOptions, RowSource } from './XlsxUpdater';
 export { XlsbUpdater } from './XlsbUpdater';
 export type { ReplaceSheetDataOptions as XlsbReplaceSheetDataOptions } from './XlsbUpdater';
 

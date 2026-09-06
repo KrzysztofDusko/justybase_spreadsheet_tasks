@@ -1,6 +1,10 @@
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import AdmZip from 'adm-zip';
 import { CellValue, getFormat, unwrapCell } from './Formats';
+import { writeBufferAtomically } from './atomicFile';
+import { writeAdmZipStreaming, StagedZipPart } from './streamingZip';
 import {
     escapeXmlText,
     columnIndexToLetter,
@@ -28,6 +32,11 @@ export interface ReplaceSheetDataOptions {
     styleFallback?: 'inherit' | 'general';
 }
 
+/** A one-pass synchronous or asynchronous source of worksheet rows. */
+export type RowSource =
+    | Iterable<ReadonlyArray<CellValue>>
+    | AsyncIterable<ReadonlyArray<CellValue>>;
+
 interface PivotCacheDef {
     path: string;
     xml: string;
@@ -49,6 +58,8 @@ interface PivotCacheDef {
 export class XlsxUpdater {
     private readonly zip: AdmZip;
     private readonly sourcePath: string;
+    private temporaryDirectory: string | null = null;
+    private readonly stagedParts: StagedZipPart = new Map();
 
     private sheetNameToPath: Map<string, string> = new Map();
     private pivotCacheDefs: PivotCacheDef[] = [];
@@ -58,6 +69,8 @@ export class XlsxUpdater {
     private sharedStringsValues: string[] = [];
     private sharedStringsOriginalLength: number = 0;
     private sharedStringsCount: number = 0;
+    private sharedStringsPending: string[] = [];
+    private sharedStringsDirty: boolean = false;
     private stringIndexMap: Map<string, number> = new Map();
 
     private readonly _oaEpoch: number;
@@ -65,15 +78,15 @@ export class XlsxUpdater {
     /**
      * @param path Path to an existing `.xlsx` file.
      */
-    constructor(path: string) {
-        this.sourcePath = path;
+    constructor(filePath: string) {
+        this.sourcePath = filePath;
         this._oaEpoch = Date.UTC(1899, 11, 30);
 
-        if (!fs.existsSync(path)) {
-            throw new Error(`XlsxUpdater: file not found: ${path}`);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`XlsxUpdater: file not found: ${filePath}`);
         }
 
-        this.zip = new AdmZip(path);
+        this.zip = new AdmZip(filePath);
 
         if (this.zip.getEntry('xl/workbook.bin')) {
             throw new Error(
@@ -118,8 +131,15 @@ export class XlsxUpdater {
             throw new Error(`XlsxUpdater: worksheet part missing for sheet "${sheetName}".`);
         }
 
-        const sheetXml = entry.getData().toString('utf8');
+        const sheetXml = this._entryData(sheetPath).toString('utf8');
         this._ensureSharedStringsLoaded();
+        if (this.sharedStringsXml !== null) {
+            this.sharedStringsCount = Math.max(
+                0,
+                this.sharedStringsCount - this._sharedStringRefCount(sheetXml),
+            );
+            this.sharedStringsDirty = true;
+        }
 
         let colStyles: Map<number, number> = new Map();
         let headerStyles: Map<number, number> = new Map();
@@ -138,6 +158,7 @@ export class XlsxUpdater {
         const newSheetData = this._buildSheetData(rows, headers, colStyles, headerStyles, dateStyle);
         const newXml = this._patchSheetXml(sheetXml, newSheetData, totalRows, lastCol);
         this.zip.updateFile(sheetPath, Buffer.from(newXml, 'utf8'));
+        this._discardStagedPart(sheetPath);
 
         if (this.sharedStringsXml !== null) {
             this._commitSharedStrings();
@@ -151,17 +172,291 @@ export class XlsxUpdater {
     }
 
     /**
+     * Replace worksheet rows from a one-pass source without materialising the
+     * complete result set. Use {@link saveStreaming} to keep the final ZIP
+     * write streaming as well.
+     */
+    async replaceSheetDataStream(
+        sheetName: string,
+        rows: RowSource,
+        options: ReplaceSheetDataOptions = {},
+    ): Promise<void> {
+        const { headers, styleFallback = 'inherit' } = options;
+        if (styleFallback !== 'inherit' && styleFallback !== 'general') {
+            throw new Error("XlsxUpdater: styleFallback must be 'inherit' or 'general'.");
+        }
+
+        const sheetPath = this.sheetNameToPath.get(sheetName);
+        if (!sheetPath) {
+            throw new Error(`XlsxUpdater: sheet "${sheetName}" not found in the workbook.`);
+        }
+
+        const entry = this.zip.getEntry(sheetPath);
+        if (!entry) {
+            throw new Error(`XlsxUpdater: worksheet part missing for sheet "${sheetName}".`);
+        }
+
+        const oldStage = this.stagedParts.get(sheetPath);
+        const beforeValuesLength = this.sharedStringsValues.length;
+        const beforePendingLength = this.sharedStringsPending.length;
+        const beforeSharedStringsCount = this.sharedStringsCount;
+        const beforeSharedStringsDirty = this.sharedStringsDirty;
+        const beforeSharedStringsXml = this.sharedStringsXml;
+        const beforeSharedStringsOriginalLength = this.sharedStringsOriginalLength;
+        const beforeStringIndexMap = new Map(this.stringIndexMap);
+        const sharedStringsEntry = this.zip.getEntry('xl/sharedStrings.xml');
+        const beforeSharedStringsBytes = sharedStringsEntry || this.stagedParts.has('xl/sharedStrings.xml')
+            ? Buffer.from(this._entryData('xl/sharedStrings.xml'))
+            : null;
+        const createdParts: string[] = [];
+        const oldSheetXml = this._entryData(sheetPath).toString('utf8');
+        const rowsPath = this._temporaryPath('.rows');
+        const outputPath = this._temporaryPath('.xml');
+        createdParts.push(rowsPath, outputPath);
+        let output: fs.WriteStream | null = null;
+
+        try {
+            this._ensureSharedStringsLoaded();
+            if (this.sharedStringsXml !== null) {
+                this.sharedStringsCount = Math.max(
+                    0,
+                    this.sharedStringsCount - this._sharedStringRefCount(oldSheetXml),
+                );
+                this.sharedStringsDirty = true;
+            }
+
+            let colStyles = new Map<number, number>();
+            let headerStyles = new Map<number, number>();
+            let dateStyle: number | null = null;
+            if (styleFallback !== 'general') {
+                const collected = this._collectExistingStyles(oldSheetXml);
+                colStyles = collected.dataStyles;
+                headerStyles = collected.headerStyles;
+                dateStyle = this._findDateStyleIndex();
+            }
+
+            const prefixMatch = /<([A-Za-z_][\w.-]*:)?sheetData\b/.exec(oldSheetXml);
+            const prefix = prefixMatch?.[1] ?? '';
+            const rowOutput = fs.createWriteStream(rowsPath);
+            output = rowOutput;
+            let outputError: Error | null = null;
+            rowOutput.on('error', error => { outputError = error; });
+
+            let nextRow = 1;
+            let width = headers?.length ?? 0;
+            let dataRowsSeen = 0;
+            let keptDataRows = 0;
+            let lastKeptEnd = 0;
+            let pendingEmptyWidth = 0;
+            let writtenBytes = 0;
+
+            const write = async (data: Buffer): Promise<void> => {
+                if (outputError) throw outputError;
+                writtenBytes += data.length;
+                if (rowOutput.write(data)) return;
+                await new Promise<void>((resolve, reject) => {
+                    const onDrain = () => { cleanup(); resolve(); };
+                    const onError = (error: Error) => { cleanup(); reject(error); };
+                    const cleanup = () => {
+                        rowOutput.off('drain', onDrain);
+                        rowOutput.off('error', onError);
+                    };
+                    rowOutput.once('drain', onDrain);
+                    rowOutput.once('error', onError);
+                });
+            };
+
+            if (headers !== undefined) {
+                const cells = headers.map((value, column) =>
+                    this._valueCell(value, column, nextRow, headerStyles, dateStyle));
+                const header = `<${prefix}row r="${nextRow}">${cells.join('')}</${prefix}row>`;
+                await write(Buffer.from(header, 'utf8'));
+                lastKeptEnd = writtenBytes;
+                nextRow++;
+            }
+
+            for await (const sourceRow of rows) {
+                if (typeof sourceRow === 'string' || sourceRow instanceof Uint8Array) {
+                    throw new TypeError('Each row must be an iterable of cells, not text');
+                }
+                const row = Array.from(sourceRow) as CellValue[];
+                const cells = row.map((value, column) =>
+                    value === null || value === undefined
+                        ? ''
+                        : this._valueCell(value, column, nextRow, colStyles, dateStyle));
+                const rowXml = `<${prefix}row r="${nextRow}">${cells.join('')}</${prefix}row>`;
+                await write(Buffer.from(rowXml, 'utf8'));
+                dataRowsSeen++;
+                nextRow++;
+
+                if (row.every(value => value === null || value === undefined)) {
+                    pendingEmptyWidth = Math.max(pendingEmptyWidth, row.length);
+                } else {
+                    width = Math.max(width, pendingEmptyWidth, row.length);
+                    pendingEmptyWidth = 0;
+                    keptDataRows = dataRowsSeen;
+                    lastKeptEnd = writtenBytes;
+                }
+            }
+
+            await new Promise<void>((resolve, reject) => {
+                rowOutput.once('close', resolve);
+                rowOutput.once('error', reject);
+                rowOutput.end();
+            });
+            if (outputError) throw outputError;
+
+            const rowsFd = fs.openSync(rowsPath, 'r+');
+            try {
+                fs.ftruncateSync(rowsFd, lastKeptEnd);
+            } finally {
+                fs.closeSync(rowsFd);
+            }
+
+            const totalRows = keptDataRows + (headers !== undefined ? 1 : 0);
+            const lastCol = width - 1;
+            const dimRef = totalRows > 0 && lastCol >= 0
+                ? `A1:${columnIndexToLetter(lastCol)}${totalRows}`
+                : 'A1';
+            this._patchSheetFile(oldSheetXml, rowsPath, outputPath, dimRef);
+            this._stagePart(sheetPath, outputPath);
+            this._commitSharedStrings();
+            this._updatePivotCaches(sheetName, dimRef, keptDataRows);
+            this._addRefreshOnLoadToPivotTables();
+
+            if (oldStage && oldStage !== outputPath) {
+                this._removeTemporaryFile(oldStage);
+            }
+            createdParts.splice(createdParts.indexOf(outputPath), 1);
+        } catch (error) {
+            this.sharedStringsValues.length = beforeValuesLength;
+            this.sharedStringsPending.length = beforePendingLength;
+            this.sharedStringsCount = beforeSharedStringsCount;
+            this.sharedStringsDirty = beforeSharedStringsDirty;
+            this.sharedStringsXml = beforeSharedStringsXml;
+            this.sharedStringsOriginalLength = beforeSharedStringsOriginalLength;
+            this.stringIndexMap.clear();
+            for (const [value, index] of beforeStringIndexMap) this.stringIndexMap.set(value, index);
+            if (beforeSharedStringsBytes) {
+                this.zip.updateFile('xl/sharedStrings.xml', beforeSharedStringsBytes);
+            }
+            if (oldStage) this.stagedParts.set(sheetPath, oldStage);
+            else this.stagedParts.delete(sheetPath);
+            throw error;
+        } finally {
+            if (output && !output.closed) output.destroy();
+            for (const temporaryPath of createdParts) {
+                this._removeTemporaryFile(temporaryPath);
+            }
+        }
+    }
+
+    /**
      * Write the updated workbook to disk.
      * @param outputPath Destination path; defaults to the source file (overwrites in place).
      */
     save(outputPath?: string): void {
         const target = outputPath ?? this.sourcePath;
-        fs.writeFileSync(target, this.zip.toBuffer());
+        this._materializeStagedParts();
+        writeBufferAtomically(this.zip.toBuffer(), target);
+    }
+
+    /** Save staged streaming replacements without materialising the ZIP. */
+    async saveStreaming(outputPath?: string): Promise<void> {
+        const target = outputPath ?? this.sourcePath;
+        await writeAdmZipStreaming(this.zip, this.stagedParts, target);
+
+        // Keep the updater reusable after an in-place save. The synchronous
+        // AdmZip path is refreshed with the staged parts only after the output
+        // archive has been safely installed.
+        this._materializeStagedParts();
     }
 
     /** The updated workbook as an in-memory ZIP buffer. */
     toBuffer(): Buffer {
+        this._materializeStagedParts();
         return this.zip.toBuffer();
+    }
+
+    /**
+     * Release the staging directory and any unsaved staged parts.
+     * The updater remains usable; a new staging directory is created lazily
+     * on the next streaming replacement.
+     */
+    dispose(): void {
+        for (const stagedPath of this.stagedParts.values()) {
+            try {
+                fs.rmSync(stagedPath, { force: true });
+            } catch {
+                // Best-effort cleanup.
+            }
+        }
+        this.stagedParts.clear();
+        if (this.temporaryDirectory !== null) {
+            try {
+                fs.rmSync(this.temporaryDirectory, { recursive: true, force: true });
+            } catch {
+                // Best-effort cleanup.
+            }
+            this.temporaryDirectory = null;
+        }
+    }
+
+    /** Support `using` declarations for automatic staging cleanup. */
+    [Symbol.dispose](): void {
+        this.dispose();
+    }
+
+    private _ensureTemporaryDirectory(): string {
+        if (this.temporaryDirectory === null) {
+            this.temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'spreadsheet-updater-'));
+        } else {
+            try {
+                fs.mkdirSync(this.temporaryDirectory, { recursive: true });
+            } catch {
+                // Best-effort; file creation will surface persistent failures.
+            }
+        }
+        return this.temporaryDirectory;
+    }
+
+    private _temporaryPath(suffix: string): string {
+        return path.join(this._ensureTemporaryDirectory(), `part-${Date.now()}-${Math.random().toString(16).slice(2)}${suffix}`);
+    }
+
+    private _removeTemporaryFile(filePath: string): void {
+        try {
+            fs.rmSync(filePath);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+    }
+
+    private _entryData(name: string): Buffer {
+        const stagedPath = this.stagedParts.get(name);
+        if (stagedPath) return fs.readFileSync(stagedPath);
+        const entry = this.zip.getEntry(name);
+        if (!entry) throw new Error(`XlsxUpdater: ZIP member missing: ${name}`);
+        return entry.getData();
+    }
+
+    private _stagePart(name: string, filePath: string): void {
+        this.stagedParts.set(name, filePath);
+    }
+
+    private _discardStagedPart(name: string): void {
+        const stagedPath = this.stagedParts.get(name);
+        if (!stagedPath) return;
+        this._removeTemporaryFile(stagedPath);
+        this.stagedParts.delete(name);
+    }
+
+    private _materializeStagedParts(): void {
+        for (const [name, stagedPath] of this.stagedParts) {
+            this.zip.updateFile(name, fs.readFileSync(stagedPath));
+            this._removeTemporaryFile(stagedPath);
+        }
+        this.stagedParts.clear();
     }
 
     // ------------------------------------------------------------------
@@ -226,16 +521,16 @@ export class XlsxUpdater {
             return;
         }
         const entry = this.zip.getEntry('xl/sharedStrings.xml');
-        if (!entry) {
+        if (!entry && !this.stagedParts.has('xl/sharedStrings.xml')) {
             this.sharedStringsXml = null;
             return;
         }
-        this.sharedStringsXml = entry.getData().toString('utf8');
+        this.sharedStringsXml = this._entryData('xl/sharedStrings.xml').toString('utf8');
         this.sharedStringsValues = parseSharedStringsXml(this.sharedStringsXml);
 
-        const countMatch = /<sst\b[^>]*>/.exec(this.sharedStringsXml);
-        const countAttr = countMatch ? /count="(\d+)"/.exec(countMatch[0]) : null;
-        this.sharedStringsCount = countAttr ? parseInt(countAttr[1], 10) : 0;
+        const countMatch = /<(?:[A-Za-z_][\w.-]*:)?sst\b[^>]*>/i.exec(this.sharedStringsXml);
+        const countAttr = countMatch ? /(?:^|\s)count\s*=\s*["'](\d+)["']/.exec(countMatch[0]) : null;
+        this.sharedStringsCount = countAttr ? parseInt(countAttr[1], 10) : this.sharedStringsValues.length;
 
         this.sharedStringsValues.forEach((value, index) => {
             if (!this.stringIndexMap.has(value)) {
@@ -243,42 +538,49 @@ export class XlsxUpdater {
             }
         });
         this.sharedStringsOriginalLength = this.sharedStringsValues.length;
+        this.sharedStringsPending = [];
+        this.sharedStringsDirty = false;
     }
 
     private _commitSharedStrings(): void {
-        if (this.sharedStringsXml === null || this.sharedStringsValues.length === this.sharedStringsOriginalLength) {
+        if (this.sharedStringsXml === null || !this.sharedStringsDirty) {
             return;
         }
 
         let xml = this.sharedStringsXml;
 
-        const sstStart = xml.indexOf('<sst');
-        const sstTagEnd = xml.indexOf('>', sstStart);
-        if (sstStart !== -1 && sstTagEnd !== -1) {
-            const tag = xml.substring(sstStart, sstTagEnd + 1);
-            const newTag = tag
-                .replace(/count="\d+"/, `count="${this.sharedStringsCount}"`)
-                .replace(/uniqueCount="\d+"/, `uniqueCount="${this.sharedStringsValues.length}"`);
-            xml = xml.substring(0, sstStart) + newTag + xml.substring(sstTagEnd + 1);
+        const sstMatch = /<(?<prefix>[A-Za-z_][\w.-]*:)?sst\b[^>]*>/i.exec(xml);
+        if (!sstMatch || sstMatch.index === undefined) {
+            throw new Error('XlsxUpdater: sharedStrings.xml has no sst element.');
+        }
+        const tag = sstMatch[0];
+        const prefix = sstMatch.groups?.prefix ?? '';
+        const newTag = XlsxUpdater._replaceOrAddXmlAttribute(
+            XlsxUpdater._replaceOrAddXmlAttribute(tag, 'count', String(this.sharedStringsCount)),
+            'uniqueCount',
+            String(this.sharedStringsValues.length),
+        );
+        xml = xml.substring(0, sstMatch.index) + newTag + xml.substring(sstMatch.index + tag.length);
+
+        const closingRe = new RegExp(`</${prefix}sst\\s*>\\s*$`, 'i');
+        const closingMatch = closingRe.exec(xml);
+        if (!closingMatch || closingMatch.index === undefined) {
+            throw new Error('XlsxUpdater: sharedStrings.xml has no closing sst element.');
         }
 
-        const sstEnd = xml.lastIndexOf('</sst>');
-        if (sstEnd === -1) {
-            return;
-        }
-
-        let appended = '';
-        for (let i = this.sharedStringsOriginalLength; i < this.sharedStringsValues.length; i++) {
-            const txt = this.sharedStringsValues[i];
+        const appended = this.sharedStringsPending.map(txt => {
             const clean = escapeXmlText(txt);
             const preserve = clean.length > 0 && (clean[0] === ' ' || clean[clean.length - 1] === ' ' || /[\t\n\r]/.test(clean));
-            appended += preserve
-                ? `<si><t xml:space="preserve">${clean}</t></si>`
-                : `<si><t>${clean}</t></si>`;
-        }
+            const tAttr = preserve ? ' xml:space="preserve"' : '';
+            return `<${prefix}si><${prefix}t${tAttr}>${clean}</${prefix}t></${prefix}si>`;
+        }).join('');
 
-        xml = xml.substring(0, sstEnd) + appended + xml.substring(sstEnd);
+        xml = xml.substring(0, closingMatch.index) + appended + xml.substring(closingMatch.index);
         this.zip.updateFile('xl/sharedStrings.xml', Buffer.from(xml, 'utf8'));
+        this.sharedStringsXml = xml;
+        this.sharedStringsOriginalLength = this.sharedStringsValues.length;
+        this.sharedStringsPending = [];
+        this.sharedStringsDirty = false;
     }
 
     // ------------------------------------------------------------------
@@ -463,9 +765,28 @@ export class XlsxUpdater {
             index = this.sharedStringsValues.length;
             this.sharedStringsValues.push(text);
             this.stringIndexMap.set(text, index);
+            this.sharedStringsPending.push(text);
         }
         this.sharedStringsCount++;
+        this.sharedStringsDirty = true;
         return `<c r="${colRef}${rowNum}" t="s"${styleAttr}><v>${index}</v></c>`;
+    }
+
+    private static _replaceOrAddXmlAttribute(tag: string, name: string, value: string): string {
+        const escaped = escapeXmlText(value);
+        const attribute = new RegExp(`(\\s${name}\\s*=\\s*["'])[^"']*(["'])`, 'i');
+        if (attribute.test(tag)) {
+            return tag.replace(attribute, `$1${escaped}$2`);
+        }
+        const insertion = ` ${name}="${escaped}"`;
+        return tag.endsWith('/>')
+            ? `${tag.slice(0, -2)}${insertion}/>`
+            : `${tag.slice(0, -1)}${insertion}>`;
+    }
+
+    private _sharedStringRefCount(sheetXml: string): number {
+        const cellTags = sheetXml.match(/<(?:(?:[A-Za-z_][\w.-]*):)?c\b[^>]*>/gi) ?? [];
+        return cellTags.filter(tag => /(?:^|\s)t\s*=\s*["']s["']/i.test(tag)).length;
     }
 
     // ------------------------------------------------------------------
@@ -527,6 +848,124 @@ export class XlsxUpdater {
         return xml;
     }
 
+    private _patchSheetFile(
+        sheetXml: string,
+        rowsPath: string,
+        outputPath: string,
+        dimensionRef: string,
+    ): void {
+        const source = Buffer.from(sheetXml, 'utf8');
+        const text = sheetXml;
+        const replacements: Array<{
+            start: number;
+            end: number;
+            data?: Buffer;
+            rows?: boolean;
+            suffix?: Buffer;
+        }> = [];
+
+        const emptySheetData = /<(?<prefix>[A-Za-z_][\w.-]*:)?sheetData\b(?<attrs>[^>]*)\/>/i.exec(text);
+        if (emptySheetData && emptySheetData.index !== undefined) {
+            const prefix = emptySheetData.groups?.prefix ?? '';
+            replacements.push({
+                start: emptySheetData.index,
+                end: emptySheetData.index + emptySheetData[0].length,
+                data: Buffer.from(`<${prefix}sheetData${emptySheetData.groups?.attrs ?? ''}>`, 'utf8'),
+                rows: true,
+                suffix: Buffer.from(`</${prefix}sheetData>`, 'utf8'),
+            });
+        } else {
+            const opening = /<(?<prefix>[A-Za-z_][\w.-]*:)?sheetData\b[^>]*>/i.exec(text);
+            if (!opening || opening.index === undefined) {
+                throw new Error('XlsxUpdater: <sheetData> element not found in worksheet XML.');
+            }
+            const prefix = opening.groups?.prefix ?? '';
+            const closeRe = new RegExp(`</${prefix}sheetData\\s*>`, 'i');
+            const closing = closeRe.exec(text.slice(opening.index + opening[0].length));
+            if (!closing || closing.index === undefined) {
+                throw new Error('XlsxUpdater: <sheetData> element not closed in worksheet XML.');
+            }
+            const closingStart = opening.index + opening[0].length + closing.index;
+            replacements.push({
+                start: opening.index + opening[0].length,
+                end: closingStart,
+                rows: true,
+            });
+        }
+
+        const dimension = /<(?<prefix>[A-Za-z_][\w.-]*:)?dimension\b[^>]*>/i.exec(text);
+        if (dimension && dimension.index !== undefined) {
+            replacements.push({
+                start: dimension.index,
+                end: dimension.index + dimension[0].length,
+                data: Buffer.from(
+                    XlsxUpdater._replaceOrAddXmlAttribute(dimension[0], 'ref', dimensionRef),
+                ),
+            });
+        } else {
+            const root = /<(?<prefix>[A-Za-z_][\w.-]*:)?worksheet\b[^>]*>/i.exec(text);
+            if (root && root.index !== undefined) {
+                const prefix = root.groups?.prefix ?? '';
+                const insertAt = root.index + root[0].length;
+                replacements.push({
+                    start: insertAt,
+                    end: insertAt,
+                    data: Buffer.from(`<${prefix}dimension ref="${dimensionRef}"/>`, 'utf8'),
+                });
+            }
+        }
+
+        const autoFilter = /<(?<prefix>[A-Za-z_][\w.-]*:)?autoFilter\b[^>]*>/i.exec(text);
+        if (autoFilter && autoFilter.index !== undefined) {
+            replacements.push({
+                start: autoFilter.index,
+                end: autoFilter.index + autoFilter[0].length,
+                data: Buffer.from(
+                    XlsxUpdater._replaceOrAddXmlAttribute(autoFilter[0], 'ref', dimensionRef),
+                    'utf8',
+                ),
+            });
+        }
+
+        replacements.sort((a, b) => a.start - b.start || a.end - b.end);
+        const fd = fs.openSync(outputPath, 'w');
+        let cursor = 0;
+        const writeBuffer = (data: Buffer) => {
+            fs.writeSync(fd, data);
+        };
+        const copyRows = () => {
+            const rowsFd = fs.openSync(rowsPath, 'r');
+            try {
+                const chunk = Buffer.alloc(1024 * 1024);
+                const length = fs.statSync(rowsPath).size;
+                let position = 0;
+                while (position < length) {
+                    const count = fs.readSync(rowsFd, chunk, 0, Math.min(chunk.length, length - position), position);
+                    if (count <= 0) throw new Error('XlsxUpdater: failed to read staged rows.');
+                    fs.writeSync(fd, chunk, 0, count);
+                    position += count;
+                }
+            } finally {
+                fs.closeSync(rowsFd);
+            }
+        };
+        try {
+            for (const replacement of replacements) {
+                const startByte = Buffer.byteLength(text.slice(0, replacement.start), 'utf8');
+                const endByte = Buffer.byteLength(text.slice(0, replacement.end), 'utf8');
+                if (startByte < cursor) throw new Error('XlsxUpdater: overlapping worksheet replacements.');
+                writeBuffer(source.subarray(cursor, startByte));
+                if (replacement.data) writeBuffer(replacement.data);
+                if (replacement.rows) copyRows();
+                if (replacement.suffix) writeBuffer(replacement.suffix);
+                cursor = endByte;
+            }
+            writeBuffer(source.subarray(cursor));
+        } finally {
+            fs.closeSync(fd);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Pivot table integration
     // ------------------------------------------------------------------
@@ -579,3 +1018,6 @@ export class XlsxUpdater {
 }
 
 export default XlsxUpdater;
+
+/** Explicit name for updating macro-enabled XLSM packages. */
+export { XlsxUpdater as XlsmUpdater };
